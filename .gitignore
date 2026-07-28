@@ -1,6 +1,6 @@
 .build/
 dist/
-vendor/bin/
+vendor/
 .DS_Store
 *.xcodeproj
 .swiftpm/

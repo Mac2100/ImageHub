@@ -42,19 +42,29 @@ iconutil -c icns "${ICONSET}" -o "${APP}/Contents/Resources/AppIcon.icns"
 cp -R Shared/payload "${APP}/Contents/Resources/payload"
 find "${APP}/Contents/Resources/payload" -name '.DS_Store' -delete
 
-# --- Optional bundled wimlib ---------------------------------------------------
-# When a universal wimlib-imagex is staged in vendor/bin, ship it so splitting
-# large install.wim files works with no Homebrew dependency. Nothing here builds
-# it — stage it yourself (e.g. lipo the arm64 and x86_64 Homebrew binaries
-# together) and it gets picked up. Without it the app falls back to searching
-# Homebrew and /usr/local at runtime.
+# --- Bundled wimlib -----------------------------------------------------------
+# Splitting an oversized install.wim needs wimlib, so it ships inside the app and
+# nobody has to install anything. CI builds the universal binary into vendor/bin
+# (see the "wimlib" job in .github/workflows/build.yml, or run
+# scripts/build_wimlib.sh yourself). If it isn't staged the app still works — it
+# falls back to searching Homebrew and /usr/local at runtime.
 if [ -x "vendor/bin/wimlib-imagex" ]; then
   mkdir -p "${APP}/Contents/Resources/bin"
   cp vendor/bin/wimlib-imagex "${APP}/Contents/Resources/bin/"
   # wimlib-imagex is normally invoked through per-command symlinks; the app only
   # calls it directly, so the single binary is enough.
   chmod +x "${APP}/Contents/Resources/bin/wimlib-imagex"
-  echo "Bundled vendor/bin/wimlib-imagex"
+
+  # wimlib-imagex is GPLv3+. It runs as a separate process rather than being
+  # linked in, so this is aggregation — but its licence text and version ship
+  # with it, which is what the licence asks for.
+  if [ -f "vendor/wimlib/COPYING" ]; then
+    cp vendor/wimlib/COPYING "${APP}/Contents/Resources/wimlib-COPYING.txt"
+  fi
+  if [ -f "vendor/wimlib/VERSION" ]; then
+    cp vendor/wimlib/VERSION "${APP}/Contents/Resources/wimlib-VERSION.txt"
+  fi
+  echo "Bundled wimlib-imagex ($(lipo -archs vendor/bin/wimlib-imagex 2>/dev/null || echo 'unknown arch'))"
 else
   echo "No vendor/bin/wimlib-imagex staged — the app will look for Homebrew's copy at runtime."
 fi

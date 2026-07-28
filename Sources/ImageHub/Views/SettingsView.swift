@@ -248,9 +248,12 @@ struct ToolsSettingsView: View {
                 LabeledContent("Status") {
                     if let found = WimTools.locate() {
                         VStack(alignment: .leading, spacing: 2) {
-                            Label("Installed", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.green)
-                            Text(found)
+                            Label(
+                                WimTools.isUsingBundledCopy ? "Included with ImageHub" : "Installed",
+                                systemImage: "checkmark.circle.fill"
+                            )
+                            .foregroundStyle(.green)
+                            Text(WimTools.isUsingBundledCopy ? "Inside the app bundle" : found)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
@@ -267,32 +270,51 @@ struct ToolsSettingsView: View {
                 }
 
                 SectionCaption(
-                    text: "wimlib is only needed when an image's install.wim is 4 GB or larger — which every current Windows 11 ISO is. It splits the file so it fits the FAT32 volume UEFI can boot from. Reading edition lists doesn't need it."
+                    text: "wimlib splits an install.wim that's 4 GB or larger — which every current Windows 11 ISO has — so it fits the FAT32 volume UEFI can boot from. It happens automatically during a build. Reading edition lists doesn't need it."
                 )
 
-                HStack {
-                    Button {
-                        installViaBrew()
-                    } label: {
-                        if installing {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("Installing…")
+                // Only worth showing when the bundled copy is missing.
+                if !WimTools.isUsingBundledCopy {
+                    HStack {
+                        Button {
+                            installViaBrew()
+                        } label: {
+                            if installing {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Installing…")
+                                }
+                            } else {
+                                Text("Install with Homebrew")
                             }
-                        } else {
-                            Text("Install with Homebrew")
+                        }
+                        .disabled(installing || WimTools.brewPath == nil)
+
+                        if WimTools.brewPath == nil {
+                            Text("Homebrew not found")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Link("wimlib.net", destination: URL(string: "https://wimlib.net")!)
+                            .font(.caption)
+                    }
+                }
+
+                if WimTools.isUsingBundledCopy {
+                    HStack {
+                        Text(
+                            "wimlib \(WimTools.bundledVersion ?? "") is GPLv3-licensed and runs as a separate program; ImageHub itself stays MIT."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if let license = WimTools.licenseURL {
+                            Button("Licence") { NSWorkspace.shared.open(license) }
+                                .controlSize(.small)
                         }
                     }
-                    .disabled(installing || WimTools.brewPath == nil)
-
-                    if WimTools.brewPath == nil {
-                        Text("Homebrew not found")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Link("wimlib.net", destination: URL(string: "https://wimlib.net")!)
-                        .font(.caption)
                 }
 
                 PathField(

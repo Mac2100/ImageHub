@@ -20,10 +20,12 @@ screen. No keystrokes in between.
   export, review in a pull request, and share with the team. Icon, name, and a
   one-line summary; a Review tab that shows the generated answer file and lists
   exactly what's blocking a build.
-- **Windows image library** — download the current retail ISO straight from
-  Microsoft, import one you already have (VLSC/Enterprise media), or pull one
-  from an internal URL with a **pinned SHA-256** so everybody builds from the
-  same bytes. Editions inside `install.wim` are read natively, no external tools.
+- **Windows image library** — import an ISO (the browser round trip to Microsoft
+  is the reliable route; their download service refuses automated requests),
+  or pull one from an internal URL with a **pinned SHA-256** so everybody builds
+  from the same bytes. Imports are verified byte-for-byte and rejected if the ISO
+  won't mount, rather than failing mid-build. Editions inside `install.wim` are
+  read natively, no external tools.
 - **Wipe and reimage in one pass** — the generated `autounattend.xml` wipes the
   target disk, lays down EFI/MSR/Windows partitions, and installs the edition the
   template asks for.
@@ -83,22 +85,34 @@ cd ImageHub
 
 For development, `swift run` works directly, or open `Package.swift` in Xcode.
 
-### One dependency: wimlib
+### Nothing to install
 
 Every current Windows 11 ISO has an `install.wim` larger than 4 GB. UEFI firmware
 is only *guaranteed* to read FAT, so Windows Setup media has to be FAT32 — which
 has a 4 GB per-file ceiling. The file therefore has to be split into
 `install.swm` parts, which Setup reads natively. ImageHub uses
-[wimlib](https://wimlib.net) for that one job:
+[wimlib](https://wimlib.net) for that one job, and **ships it inside the app**, so
+there is nothing to set up. The split happens automatically during a build.
+
+Everything else — reading edition lists, formatting, copying, generating the
+answer file — uses either macOS's own tools (`diskutil`, `hdiutil`) or code in
+this repo. Notably the file copying is native rather than `rsync`: macOS still
+ships rsync 2.6.9, which lacks the progress reporting this needs.
+
+If you build from source without staging wimlib, the app falls back to finding
+Homebrew's copy (`brew install wimlib`) and Settings → Tools has a one-click
+installer. To produce the bundled binary yourself:
 
 ```bash
-brew install wimlib
+./scripts/build_wimlib.sh vendor/bin     # then ./scripts/make_app.sh
 ```
 
-Settings → Tools has a one-click Homebrew install, shows where it found the tool,
-and lets you point at a copy elsewhere. Everything else — reading edition lists,
-formatting, copying, generating the answer file — is done with tools already on
-macOS (`diskutil`, `hdiutil`, `rsync`).
+**Licence note:** `wimlib-imagex` is GPLv3+ (only `libwim` may be LGPL). ImageHub
+invokes it as a separate process rather than linking it, so ImageHub itself stays
+MIT and this is aggregation — but the DMG does contain a GPLv3 program. Its
+licence text and pinned version ship in the app bundle, `scripts/build_wimlib.sh`
+records exactly which source it was built from, and Settings → Tools links to the
+licence.
 
 ## How a build works
 
@@ -129,10 +143,10 @@ ImageHub supports both, per template:
 - **Stock ISO + provisioning** (default) — Microsoft's unmodified `install.wim`
   plus an answer file and provisioning payload. Templates are kilobytes, diff
   cleanly in git, need no Windows machine to build, and are trivial to amend.
-- **A captured reference image** — set the template's image source to
-  *Captured install.wim* and point at a sysprepped (`/generalize /oobe`) image
-  from a reference machine or a share. Setup still boots from Microsoft's media;
-  only the installed image is yours. Provisioning still runs on top, so the two
+- **A captured reference image** — under the template's Windows tab → **Advanced**,
+  point *Install a captured image* at a sysprepped (`/generalize /oobe`) image from
+  a reference machine or a share. Setup still boots from Microsoft's media; only
+  the installed image is yours. Provisioning still runs on top, so the two
   approaches compose.
 
 ## Windows
@@ -185,13 +199,14 @@ logic that already exists rather than a rewrite. CI only builds the macOS app.
 ```
 Sources/ImageHub/          SwiftUI app
   Models/                  Template schema, images, drives, build jobs
-  Services/                Disk, ISO, WIM, answer file, payload, updates
+  Services/                Disk, ISO, WIM, copying, answer file, payload, updates
   ViewModels/AppState      App-wide state and the build queue
   Views/                   UI, theme system, settings
 Shared/payload/            Provision.ps1 — copied onto every drive (shared)
 Shared/schema/             JSON Schema for templates and the payload config
 Windows/ImageHub.ps1       Windows-side builder over the same schema
 scripts/make_app.sh        Universal build → .app, .zip, .dmg
+scripts/build_wimlib.sh    Builds the bundled wimlib-imagex for this arch
 scripts/make_icon.py       Regenerates the app icon
 ```
 

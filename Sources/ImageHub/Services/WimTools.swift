@@ -42,6 +42,39 @@ enum WimTools {
         searchPaths.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// The copy shipped inside the app bundle, when this build has one.
+    static var bundledPath: String? {
+        guard let path = Bundle.main.resourceURL?
+            .appendingPathComponent("bin/wimlib-imagex").path,
+              FileManager.default.isExecutableFile(atPath: path)
+        else { return nil }
+        return path
+    }
+
+    static var isUsingBundledCopy: Bool {
+        guard let located = locate(), let bundled = bundledPath else { return false }
+        return located == bundled
+    }
+
+    /// Version recorded when the bundled binary was built.
+    static var bundledVersion: String? {
+        guard let url = Bundle.main.resourceURL?
+            .appendingPathComponent("wimlib-VERSION.txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// wimlib's licence text, shipped beside the binary.
+    static var licenseURL: URL? {
+        guard let url = Bundle.main.resourceURL?
+            .appendingPathComponent("wimlib-COPYING.txt"),
+              FileManager.default.fileExists(atPath: url.path)
+        else { return nil }
+        return url
+    }
+
     static var isAvailable: Bool { locate() != nil }
 
     static func version() async -> String? {
@@ -70,9 +103,10 @@ enum WimTools {
 
     static let missingToolMessage = """
         This image's install.wim is larger than 4 GB, so it has to be split before \
-        it fits on the FAT32 volume that UEFI can boot. That needs wimlib. \
-        Install it with “brew install wimlib”, or point ImageHub at an existing \
-        copy in Settings → Tools.
+        it fits on the FAT32 volume that UEFI can boot. That needs wimlib, which \
+        normally ships inside ImageHub — this build doesn't have it. Install it \
+        with “brew install wimlib”, or point ImageHub at an existing copy in \
+        Settings → Tools.
         """
 
     // MARK: - Homebrew helper
