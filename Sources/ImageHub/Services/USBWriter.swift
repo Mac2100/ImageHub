@@ -241,41 +241,162 @@ enum USBWriter {
         guard WimTools.isAvailable else {
             throw WriteError(message: WimTools.missingToolMessage)
         }
-        job.detail = "Splitting \(source.lastPathComponent) for FAT32"
-        let firstPart = destinationSources.appendingPathComponent("install.swm")
-        try await WimTools.split(source: source, firstPart: firstPart, log: log)
 
-        let parts = (try? fm.contentsOfDirectory(atPath: destinationSources.path))?
-            .filter { $0.lowercased().hasSuffix(".swm") }
-            .sorted() ?? []
+        // Where wimlib writes matters enormously. Building a WIM is not one
+        // sequential pass: wimlib interleaves data with chunk tables and seeks
+        // back to fix up headers. Pointed straight at the FAT32 stick, that
+        // pattern ran at about 1 MB/s on a real build — hours for one image —
+        // because macOS's msdosfs plus a cheap flash controller handle
+        // small non-sequential writes appallingly badly.
+        //
+        // So split to the Mac's own disk, then stream the finished parts over in
+        // large sequential chunks, which is the one thing these sticks do well.
+        // Costs a temporary copy of the image; needs the free space to do it.
+        let scratch = scratchDirectoryForSplit(sized: size, job: job)
+        defer {
+            if let scratch { try? fm.removeItem(at: scratch) }
+        }
+
+        let splitInto = scratch ?? destinationSources
+        let firstPart = splitInto.appendingPathComponent("install.swm")
+        job.detail = "Splitting \(source.lastPathComponent) for FAT32"
+
+        try await WimTools.split(
+            source: source,
+            firstPart: firstPart,
+            log: log,
+            progress: { fraction in
+                Task { @MainActor in
+                    // Splitting is the first half of the work when it goes via
+                    // scratch, and all of it when it doesn't.
+                    job.stageProgress = scratch == nil ? fraction : fraction / 2
+                    job.detail = "Splitting \(source.lastPathComponent) for FAT32 — \(Int(fraction * 100))%"
+                }
+            }
+        )
+
+        var parts = splitPartNames(in: splitInto)
         guard !parts.isEmpty else {
             throw WriteError(message: "wimlib reported success but no .swm parts were written.")
         }
+
+        if let scratch {
+            job.append("Split into \(parts.count) part\(parts.count == 1 ? "" : "s"); copying to the drive…")
+            for (index, name) in parts.enumerated() {
+                let from = scratch.appendingPathComponent(name)
+                let to = destinationSources.appendingPathComponent(name)
+                try await copyLargeFile(
+                    from: from,
+                    to: to,
+                    job: job,
+                    log: log,
+                    // Second half of the stage, shared across the parts.
+                    progressRange: (
+                        0.5 + 0.5 * Double(index) / Double(parts.count),
+                        0.5 + 0.5 * Double(index + 1) / Double(parts.count)
+                    )
+                )
+                // Free the scratch copy as we go — this is 7 GB of duplication.
+                try? fm.removeItem(at: from)
+            }
+            parts = splitPartNames(in: destinationSources)
+        }
+
         job.append("Wrote \(parts.count) split part\(parts.count == 1 ? "" : "s"): \(parts.joined(separator: ", "))")
     }
 
+    private static func splitPartNames(in directory: URL) -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: directory.path))?
+            .filter { $0.lowercased().hasSuffix(".swm") }
+            .sorted() ?? []
+    }
+
+    /// A directory on the Mac's own disk to split into, or nil to split straight
+    /// onto the USB drive because there isn't room to stage it.
+    private static func scratchDirectoryForSplit(
+        sized imageSize: Int64,
+        job: BuildJob
+    ) -> URL? {
+        // The parts together come to about the source size; leave headroom so a
+        // build can never be the thing that fills someone's boot disk.
+        let needed = imageSize + 2_000_000_000
+        let base = AppPaths.support
+
+        // A crash mid-split leaves several GB behind. Clear any before measuring
+        // free space, or the leftovers are what stops the next build staging.
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: base.path)) ?? []
+        where name.hasPrefix("Split-") {
+            try? fm.removeItem(at: base.appendingPathComponent(name))
+        }
+
+        let free = (try? base.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage ?? 0
+
+        guard free >= needed else {
+            job.append(
+                """
+                ⚠︎ Only \(free.byteSize) free on this Mac, so the image will be split \
+                directly onto the USB drive. That is a much slower write pattern for FAT32 \
+                media — expect this stage to take a long time. Freeing \(needed.byteSize) \
+                would let ImageHub stage the split locally instead.
+                """
+            )
+            return nil
+        }
+
+        let scratch = base.appendingPathComponent("Split-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        } catch {
+            job.append("⚠︎ Couldn't create a scratch folder (\(error.localizedDescription)); splitting straight to the drive.")
+            return nil
+        }
+        return scratch
+    }
+
+    /// Copies one large file, mapping its 0…1 progress onto `progressRange` so a
+    /// caller can spend part of a stage on it.
     private static func copyLargeFile(
         from source: URL,
         to destination: URL,
         job: BuildJob,
-        log: @escaping @Sendable (String) -> Void
+        log: @escaping @Sendable (String) -> Void,
+        progressRange: (Double, Double) = (0, 1)
     ) async throws {
         let name = source.lastPathComponent
         let token = job.cancelToken
+        let bytes = fileSize(of: source)
+        let started = Date()
+        let (low, high) = progressRange
+
         try await Task.detached(priority: .userInitiated) {
             try FileCopier.copyFile(
                 from: source,
                 to: destination,
                 progress: { fraction in
                     Task { @MainActor in
-                        job.stageProgress = fraction
-                        job.detail = "Writing \(name) — \(Int(fraction * 100))%"
+                        job.stageProgress = low + (high - low) * fraction
+                        job.detail = "Writing \(name) — \(Int(fraction * 100))%\(rate(bytes: Double(bytes) * fraction, since: started))"
                     }
                 },
                 isCancelled: { token.isCancelled }
             )
         }.value
-        job.stageProgress = 1
+
+        job.stageProgress = high
+        let took = Date().timeIntervalSince(started)
+        job.append("Wrote \(name) (\(bytes.byteSize)) in \(BuildJob.shortDuration(took))\(rate(bytes: Double(bytes), since: started)).")
+    }
+
+    /// " — 4.2 MB/s", or "" until there's enough to measure. Cheap sticks vary by
+    /// an order of magnitude, so seeing the number is the difference between
+    /// "this drive is slow" and "something is wrong".
+    private static func rate(bytes: Double, since started: Date) -> String {
+        let seconds = Date().timeIntervalSince(started)
+        guard seconds > 2, bytes > 0 else { return "" }
+        let perSecond = bytes / seconds / 1_000_000
+        return String(format: " — %.1f MB/s", perSecond)
     }
 
     private static func verifyMedia(at volume: URL, job: BuildJob) throws {

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct BuildSheet: View {
@@ -348,6 +349,10 @@ struct BuildProgressView: View {
     @ObservedObject var job: BuildJob
     @Environment(\.appTheme) private var theme
     @State private var showLog = true
+    /// The elapsed times are computed from `Date()`, so without a tick they only
+    /// move when the job happens to publish something — and during a long split
+    /// that can be a minute apart, which reads as a frozen clock.
+    @State private var now = Date()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -358,6 +363,9 @@ struct BuildProgressView: View {
             }
         }
         .padding(16)
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
+            if job.isRunning { now = date }
+        }
     }
 
     private var summary: some View {
@@ -445,6 +453,15 @@ struct BuildProgressView: View {
                         .font(.callout)
                         .foregroundStyle(textStyle(state))
                     Spacer()
+                    // Per-stage time: "the build has been going 45 minutes" says
+                    // nothing about which step is slow, and on this workload one
+                    // step routinely dwarfs all the others.
+                    if let took = job.duration(of: stage, at: now), took >= 1 {
+                        Text(BuildJob.shortDuration(took))
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
                     if case .running = state, let progress = job.stageProgress {
                         Text("\(Int(progress * 100))%")
                             .font(.caption)

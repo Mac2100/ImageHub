@@ -97,6 +97,14 @@ final class BuildJob: ObservableObject, Identifiable {
     @Published var startedAt: Date?
     @Published var finishedAt: Date?
 
+    /// When each stage started, and how long the finished ones took.
+    ///
+    /// Without this, "the build has been going 45 minutes" says nothing about
+    /// which step is slow — and on this workload one step can legitimately take
+    /// twenty times longer than the rest put together.
+    @Published var stageStartedAt: [Stage: Date] = [:]
+    @Published var stageDuration: [Stage: TimeInterval] = [:]
+
     /// Set by the UI; long-running steps check it between chunks.
     @Published var cancelRequested = false
 
@@ -133,6 +141,7 @@ final class BuildJob: ObservableObject, Identifiable {
         currentStage = stage
         stages[stage] = .running
         stageProgress = nil
+        stageStartedAt[stage] = Date()
         detail = message ?? stage.title
         append(message ?? "\(stage.title)…")
     }
@@ -140,6 +149,29 @@ final class BuildJob: ObservableObject, Identifiable {
     func finish(_ stage: Stage) {
         stages[stage] = .done
         stageProgress = nil
+        if let started = stageStartedAt[stage] {
+            let took = Date().timeIntervalSince(started)
+            stageDuration[stage] = took
+            if took >= 10 {
+                append("\(stage.title) took \(BuildJob.shortDuration(took)).")
+            }
+        }
+    }
+
+    /// How long `stage` has been running, or took. `now` is a parameter so a view
+    /// can pass its own tick and actually depend on it.
+    func duration(of stage: Stage, at now: Date = Date()) -> TimeInterval? {
+        if let done = stageDuration[stage] { return done }
+        guard stages[stage] == .running, let started = stageStartedAt[stage] else { return nil }
+        return now.timeIntervalSince(started)
+    }
+
+    static func shortDuration(_ interval: TimeInterval) -> String {
+        let total = Int(interval.rounded())
+        let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60)
+        if h > 0 { return "\(h)h \(m)m" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
     }
 
     func skip(_ stage: Stage, _ reason: String) {

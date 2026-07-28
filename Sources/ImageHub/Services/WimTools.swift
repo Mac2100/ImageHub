@@ -79,10 +79,14 @@ enum WimTools {
 
     /// Splits `source` into `install.swm`, `install2.swm`, … next to `destination`.
     /// `destination` is the path of the first part.
+    ///
+    /// `progress` receives 0…1 parsed from wimlib's own output, so the build view
+    /// shows real movement on what is usually the longest stage of a build.
     static func split(
         source: URL,
         firstPart destination: URL,
-        log: @escaping @Sendable (String) -> Void
+        log: @escaping @Sendable (String) -> Void,
+        progress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
         guard let tool = locate() else {
             throw ToolError(message: missingToolMessage)
@@ -91,8 +95,26 @@ enum WimTools {
         try await Shell.check(
             tool,
             ["split", source.path, destination.path, String(splitPartSizeMB)],
-            onLine: log
+            onLine: { line in
+                if let progress, let fraction = splitFraction(from: line) {
+                    progress(fraction)
+                }
+                log(line)
+            }
         )
+    }
+
+    /// Pulls the fraction out of `Splitting WIM: 2011 MiB of 7177 MiB (28%) written, part 1 of 3`.
+    ///
+    /// The MiB values are used rather than wimlib's own percentage because they
+    /// have more resolution and the percentage is rounded to a whole number.
+    static func splitFraction(from line: String) -> Double? {
+        guard line.contains("MiB of") else { return nil }
+        let numbers = line
+            .split(whereSeparator: { !$0.isNumber })
+            .compactMap { Double($0) }
+        guard numbers.count >= 2, numbers[1] > 0 else { return nil }
+        return min(1, numbers[0] / numbers[1])
     }
 
     static let missingToolMessage = """

@@ -54,8 +54,10 @@ screen. No keystrokes in between.
   contact also land in Windows' OEM information, so they show in Settings → About.
 - **Custom PowerShell** — hooks in three phases (Setup `specialize`,
   provisioning, finalize) for anything the template can't express.
-- **Live build view** — eight stages with per-stage progress, a streaming log,
-  cancel, and a saved log per build in Build History.
+- **Live build view** — eight stages with per-stage progress and elapsed time, a
+  live MB/s readout while writing, a streaming log, cancel, and a saved log per
+  build in Build History. USB sticks vary by an order of magnitude, so the
+  throughput is shown rather than left to be inferred from a spinner.
 - **Safety by construction** — only removable external media is ever offered as a
   target; internal disks are filtered out before the list is built, so there is
   nothing to pick by mistake. The drive is re-verified immediately before
@@ -131,6 +133,15 @@ licence.
 4. **Write the install image** — copied straight across if it's under 4 GB, split
    into `install*.swm` with wimlib if not. A template can substitute its own
    captured `install.wim` here.
+
+   The split is staged on the Mac's own disk and the finished parts are then
+   streamed to the drive, rather than pointing wimlib at the stick directly.
+   Building a WIM is not one sequential pass — wimlib interleaves data with chunk
+   tables and seeks back to fix up headers — and that pattern on FAT32 over a
+   cheap flash controller measured about **1 MB/s**, hours for one image. Staging
+   locally keeps those writes on the SSD and gives the stick one long sequential
+   stream instead. It needs the image size plus 2 GB free; without that, ImageHub
+   splits straight to the drive and says so in the log.
 5. **Generate `autounattend.xml`** from the template, injecting secrets from the
    Keychain at this moment and nowhere else.
 6. **Write the `ImageHub\` payload** — `Provision.ps1`, a resolved `config.json`,
