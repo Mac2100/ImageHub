@@ -32,6 +32,10 @@ jobs:
           - runner: macos-13
             arch: x86_64
     runs-on: ${{ matrix.runner }}
+    # Intel runners are being phased out and can sit queued for a long time. The
+    # app build waits on this job, so cap it: a timeout fails this arch, the
+    # release still goes out, and Intel Macs fall back to Homebrew.
+    timeout-minutes: 20
     steps:
       - name: Check out
         uses: actions/checkout@v4
