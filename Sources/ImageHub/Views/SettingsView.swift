@@ -93,7 +93,6 @@ struct AppearanceSettingsView: View {
 struct GeneralSettingsView: View {
     @EnvironmentObject private var appState: AppState
 
-    @AppStorage("defaultVolumeLabel") private var volumeLabel = "IMAGEHUB"
     @AppStorage("ejectAfterBuild") private var ejectAfterBuild = false
     @AppStorage("showToasts") private var showToasts = true
     @AppStorage("defaultLanguage") private var defaultLanguage = "en-US"
@@ -102,16 +101,7 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section {
-                LabeledContent("USB volume label") {
-                    TextField("IMAGEHUB", text: $volumeLabel)
-                        .frame(width: 140)
-                        .onChange(of: volumeLabel) { _, newValue in
-                            volumeLabel = DiskService.sanitizeFAT32Label(newValue)
-                        }
-                }
-                SectionCaption(
-                    text: "FAT32 labels are limited to 11 upper-case characters, so this is normalised as you type."
-                )
+                VolumeLabelField()
                 Toggle("Eject the drive when a build finishes", isOn: $ejectAfterBuild)
             } header: {
                 Text("Media")
@@ -182,6 +172,63 @@ struct GeneralSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The USB volume label, normalised on commit rather than per keystroke.
+///
+/// Rewriting the bound value on every keystroke made this unusable: the caret
+/// jumped to the end after each character, and because the sanitiser substitutes
+/// a default for an empty string, clearing the field instantly refilled it with
+/// "IMAGEHUB". It also carried two labels — one from `LabeledContent` and one
+/// from the `TextField`'s own title.
+struct VolumeLabelField: View {
+    @AppStorage("defaultVolumeLabel") private var stored = "IMAGEHUB"
+
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("USB volume label") {
+                HStack(spacing: 8) {
+                    TextField("", text: $text)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.callout.monospaced())
+                        .frame(width: 170)
+                        .focused($focused)
+                        .onSubmit(commit)
+                    Text("\(normalised.count)/11")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if focused && normalised != text {
+                Text("Will be saved as “\(normalised)”")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                SectionCaption(
+                    text: "FAT32 labels are at most 11 characters, upper case, letters and digits only. Yours is tidied up when you finish typing."
+                )
+            }
+        }
+        .onAppear { text = stored }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { commit() }
+        }
+        .onDisappear(perform: commit)
+    }
+
+    private var normalised: String {
+        DiskService.sanitizeFAT32Label(text)
+    }
+
+    private func commit() {
+        let value = normalised
+        text = value
+        stored = value
     }
 }
 

@@ -246,8 +246,24 @@ struct AppCatalogSheet: View {
     let onAdd: ([AppCatalog.Entry]) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
     @State private var search = ""
     @State private var selected: Set<String> = []
+
+    /// Grouped once per search term.
+    ///
+    /// This used to build `Section`s conditionally inside a `ForEach` over
+    /// categories, filtering inside the view body. SwiftUI mis-diffed the
+    /// conditional sections — headers rendered with no rows beneath them — and
+    /// the `List` oscillated vertically as it renegotiated row heights. A
+    /// precomputed array and a `LazyVStack` make the layout deterministic.
+    private var groups: [(category: String, entries: [AppCatalog.Entry])] {
+        let matches = AppCatalog.search(search)
+        return AppCatalog.categories.compactMap { category in
+            let entries = matches.filter { $0.category == category }
+            return entries.isEmpty ? nil : (category: category, entries: entries)
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -261,42 +277,34 @@ struct AppCatalogSheet: View {
 
             Divider()
 
-            List {
-                ForEach(AppCatalog.categories, id: \.self) { category in
-                    let entries = AppCatalog.search(search).filter { $0.category == category }
-                    if !entries.isEmpty {
-                        Section(category) {
-                            ForEach(entries) { entry in
-                                HStack(spacing: 10) {
-                                    Toggle("", isOn: Binding(
-                                        get: { selected.contains(entry.id) },
-                                        set: { isOn in
-                                            if isOn { selected.insert(entry.id) }
-                                            else { selected.remove(entry.id) }
-                                        }
-                                    ))
-                                    .labelsHidden()
+            if groups.isEmpty {
+                EmptyStateView(
+                    symbol: "magnifyingglass",
+                    title: "No matches",
+                    message: "Nothing in the catalog matches “\(search)”. Any winget package ID can still be typed in by hand — the catalog is only a shortcut."
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(groups, id: \.category) { group in
+                            Text(group.category)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 14)
+                                .padding(.top, 14)
+                                .padding(.bottom, 6)
 
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text(entry.name)
-                                            .font(.callout)
-                                        Text(entry.id)
-                                            .font(.caption.monospaced())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    if !entry.note.isEmpty {
-                                        Text(entry.note)
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    }
+                            ForEach(group.entries) { entry in
+                                row(entry)
+                                if entry.id != group.entries.last?.id {
+                                    Divider().padding(.leading, 44)
                                 }
                             }
                         }
                     }
+                    .padding(.bottom, 10)
                 }
             }
-            .listStyle(.inset)
 
             Divider()
 
@@ -315,7 +323,44 @@ struct AppCatalogSheet: View {
             }
             .padding(14)
         }
-        .frame(width: 560, height: 520)
+        .frame(width: 580, height: 540)
+    }
+
+    private func row(_ entry: AppCatalog.Entry) -> some View {
+        let isSelected = selected.contains(entry.id)
+        return Button {
+            if isSelected { selected.remove(entry.id) } else { selected.insert(entry.id) }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(theme.primary) : AnyShapeStyle(.tertiary))
+                    .frame(width: 20)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(entry.name)
+                        .font(.callout)
+                    Text(entry.id)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 8)
+
+                if !entry.note.isEmpty {
+                    Text(entry.note)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: 190, alignment: .trailing)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
