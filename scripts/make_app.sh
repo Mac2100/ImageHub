@@ -44,8 +44,10 @@ find "${APP}/Contents/Resources/payload" -name '.DS_Store' -delete
 
 # --- Optional bundled wimlib ---------------------------------------------------
 # When a universal wimlib-imagex is staged in vendor/bin, ship it so splitting
-# large install.wim files works with no Homebrew dependency. See
-# .github/workflows/wimlib.yml for how that binary is produced.
+# large install.wim files works with no Homebrew dependency. Nothing here builds
+# it — stage it yourself (e.g. lipo the arm64 and x86_64 Homebrew binaries
+# together) and it gets picked up. Without it the app falls back to searching
+# Homebrew and /usr/local at runtime.
 if [ -x "vendor/bin/wimlib-imagex" ]; then
   mkdir -p "${APP}/Contents/Resources/bin"
   cp vendor/bin/wimlib-imagex "${APP}/Contents/Resources/bin/"
