@@ -142,11 +142,10 @@ final class ImageLibrary: ObservableObject {
             )
             return await download(offer)
         } catch {
-            ToastCenter.shared.show(
-                "Couldn't reach Microsoft's download service",
-                detail: error.localizedDescription,
-                style: .error
-            )
+            // Deliberately no toast: Microsoft refusing an automated request is a
+            // routine outcome with a known workaround, and the Images view shows
+            // an inline banner offering it. A red banner every attempt just reads
+            // as the app being broken.
             log?(error.localizedDescription)
             return nil
         }

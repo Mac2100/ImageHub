@@ -257,9 +257,9 @@ enum MicrosoftISOService {
         throw ServiceError(
             message: """
                 Microsoft's download service declined the request\(codes.isEmpty ? "" : " (\(codes))"). \
-                This usually means the IP address is rate-limited or filtered — VPNs and \
-                datacentre ranges are commonly blocked. Import an ISO manually, or point \
-                ImageHub at an internal URL instead.
+                Their anti-abuse check refuses clients that aren't a real browser session, \
+                and it can't be reliably satisfied from an app. Download the ISO in a \
+                browser and import it, or point ImageHub at an internal URL.
                 """
         )
     }

@@ -24,15 +24,15 @@ struct ImagesView: View {
                     EmptyStateView(
                         symbol: "opticaldiscdrive",
                         title: "No Windows images yet",
-                        message: "Download the current retail ISO straight from Microsoft, or import one you already have — Enterprise and LTSC media has to be imported, since Microsoft doesn't publish it."
+                        message: "Get the current retail ISO from Microsoft in your browser, then import it — their download service refuses automated requests, so that round trip is the reliable path. Enterprise and LTSC media has to be imported too, since Microsoft doesn't publish it."
                     ) {
                         HStack {
-                            Button("Download Windows 11") {
-                                download(.win11)
+                            Button("Get Windows 11 ISO…") {
+                                openMicrosoftPage(.win11)
                             }
                             .buttonStyle(.borderedProminent)
                             Button("Import ISO…") { importISO() }
-                            Button("Open Microsoft's Page…") { openMicrosoftPage(.win11) }
+                            Button("Try Direct Download") { download(.win11) }
                         }
                     }
                     .frame(minHeight: 320)
@@ -61,10 +61,10 @@ struct ImagesView: View {
                 if lastDownloadFailed {
                     VStack(alignment: .leading, spacing: 10) {
                         NoticeBanner(
-                            kind: .warning,
+                            kind: .info,
                             title: "Microsoft wouldn't hand over a download link",
                             messages: [
-                                "Their download service refuses automated requests fairly often — it's an anti-abuse check, not something ImageHub can talk its way past.",
+                                "Their anti-abuse check refuses clients that aren't a real browser session. ImageHub can't reliably satisfy it, and this isn't a sign anything else is wrong.",
                                 "Downloading the ISO in a browser takes about the same time and always works. Grab it, then use Import ISO to add it to the library."
                             ]
                         )
@@ -89,8 +89,8 @@ struct ImagesView: View {
                     kind: .info,
                     title: "Where these come from",
                     messages: [
-                        "“Download from Microsoft” uses the same public download service as microsoft.com. ImageHub doesn't mirror or modify anything — files come from Microsoft's CDN.",
-                        "That service rate-limits by IP and often blocks VPN and datacentre ranges. If it refuses, import an ISO or host one on an internal URL with a pinned checksum."
+                        "ImageHub never mirrors or modifies Microsoft's images — whichever route you use, the bytes come from Microsoft.",
+                        "“Try direct download” asks the same public service microsoft.com uses. It often refuses non-browser clients, which is why the browser round trip is the default. For a team, host one approved ISO on an internal URL with a pinned SHA-256 so everyone builds from identical bytes."
                     ]
                 )
             }
@@ -106,10 +106,10 @@ struct ImagesView: View {
             ) {
                 HStack(spacing: 8) {
                     Menu {
-                        Button("Latest Windows 11") { download(.win11) }
-                        Button("Latest Windows 10") { download(.win10) }
-                        Divider()
                         Button("Open Microsoft's Download Page…") { openMicrosoftPage(.win11) }
+                        Divider()
+                        Button("Try Direct Download (Windows 11)") { download(.win11) }
+                        Button("Try Direct Download (Windows 10)") { download(.win10) }
                     } label: {
                         Label("Download", systemImage: "arrow.down.circle")
                     }

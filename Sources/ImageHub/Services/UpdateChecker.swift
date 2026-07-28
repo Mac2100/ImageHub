@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Checks GitHub Releases for a newer version of ImageHub.
@@ -37,8 +38,12 @@ final class UpdateChecker: ObservableObject {
         Task { await check() }
     }
 
-    /// Runs a check and, for user-initiated checks, surfaces the "nothing new"
-    /// outcomes as toasts (silent launch checks stay silent).
+    /// Runs a check and, for user-initiated checks, always reports the outcome —
+    /// including the one that matters. Silent launch checks stay silent.
+    ///
+    /// An alert rather than a toast for the "update available" case: toasts live
+    /// in the main window, so choosing "Check for Updates…" with the window
+    /// closed would have produced nothing at all.
     func check(userInitiated: Bool) async {
         await check()
         guard userInitiated else { return }
@@ -56,7 +61,36 @@ final class UpdateChecker: ObservableObject {
             )
         case .failed(let message):
             ToastCenter.shared.show("Update check failed", detail: message, style: .error)
-        case .idle, .checking, .updateAvailable:
+        case .updateAvailable(let version, let url):
+            promptToInstall(version: version, url: url)
+        case .idle, .checking:
+            break
+        }
+    }
+
+    /// Offers the update straight away, so "Check for Updates…" is a complete
+    /// action instead of a hint to go and open Settings.
+    func promptToInstall(version: String, url: URL) {
+        guard !SelfUpdater.shared.isBusy else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "ImageHub \(version) is available"
+        alert.informativeText = """
+            You're running \(AppVersion.current). Installing downloads the update, \
+            replaces the app in place, and relaunches it.
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Install & Relaunch")
+        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: "Release Notes")
+
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            SelfUpdater.shared.install(from: url)
+        case .alertThirdButtonReturn:
+            NSWorkspace.shared.open(Self.releasesPage)
+        default:
             break
         }
     }

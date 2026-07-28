@@ -10,6 +10,15 @@ final class TemplateStore: ObservableObject {
 
     private let directory: URL
 
+    /// IDs of templates deleted in this session.
+    ///
+    /// The editor autosaves, and closing it flushes one last write. Deleting the
+    /// template that is currently open therefore raced its own editor: the file
+    /// was removed, the editor disappeared, its flush wrote the JSON straight
+    /// back, and the deletion looked like it had done nothing. A save for a
+    /// tombstoned ID is refused instead.
+    private var tombstones: Set<UUID> = []
+
     init(directory: URL? = nil) {
         self.directory = directory ?? AppPaths.templates
         load()
@@ -18,6 +27,7 @@ final class TemplateStore: ObservableObject {
     // MARK: - Loading
 
     func load() {
+        tombstones.removeAll()
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -37,12 +47,17 @@ final class TemplateStore: ObservableObject {
             }
         }
 
-        if loaded.isEmpty && files.isEmpty {
-            // First run — seed something usable rather than an empty list.
+        // Seed the starter templates on genuine first run only. Keying off "the
+        // folder is empty" would silently recreate them after someone deleted
+        // the last template, which reads as deletion not working.
+        let seededKey = "didSeedStarterTemplates"
+        if loaded.isEmpty && files.isEmpty
+            && !UserDefaults.standard.bool(forKey: seededKey) {
             loaded = DeploymentTemplate.starterPack()
             for template in loaded {
                 try? persist(template)
             }
+            UserDefaults.standard.set(true, forKey: seededKey)
         }
 
         templates = loaded.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -57,6 +72,7 @@ final class TemplateStore: ObservableObject {
 
     @discardableResult
     func save(_ template: DeploymentTemplate) -> Bool {
+        guard !tombstones.contains(template.id) else { return false }
         var updated = template
         updated.updatedAt = Date()
         do {
@@ -79,6 +95,7 @@ final class TemplateStore: ObservableObject {
     }
 
     func delete(_ template: DeploymentTemplate) {
+        tombstones.insert(template.id)
         try? FileManager.default.removeItem(at: url(for: template.id))
         Keychain.deleteAll(for: template.id)
         templates.removeAll { $0.id == template.id }
@@ -127,7 +144,7 @@ final class TemplateStore: ObservableObject {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         var template = try decoder.decode(DeploymentTemplate.self, from: try Data(contentsOf: url))
-        if templates.contains(where: { $0.id == template.id }) {
+        if templates.contains(where: { $0.id == template.id }) || tombstones.contains(template.id) {
             template.id = UUID()
             template.name = uniqueName(basedOn: template.name)
         }
