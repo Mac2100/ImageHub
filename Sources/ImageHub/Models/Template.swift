@@ -89,20 +89,20 @@ enum ImageSourceKind: String, Codable, CaseIterable, Identifiable, Hashable {
 
     var label: String {
         switch self {
-        case .latestFromMicrosoft: return "Latest from Microsoft"
-        case .libraryImage: return "Image from library"
-        case .customWim: return "Captured install.wim"
+        case .latestFromMicrosoft: return "Ask me when building"
+        case .libraryImage: return "Always this image"
+        case .customWim: return "Install a captured image"
         }
     }
 
     var help: String {
         switch self {
         case .latestFromMicrosoft:
-            return "Downloads the current retail ISO from Microsoft when the drive is built."
+            return "The build sheet asks which image from your library to use. This is the right choice unless you have a reason to pin one."
         case .libraryImage:
-            return "Uses a specific ISO you have already imported, so builds are byte-for-byte repeatable."
+            return "Pins one specific ISO, so this template always builds from identical bytes no matter what else is in the library."
         case .customWim:
-            return "Boots Microsoft's Setup but installs your own captured image. Point at a sysprepped install.wim on disk or a share."
+            return "You still pick an ISO at build time — Setup and the boot files come from it — but the operating system is installed from your own captured image instead of Microsoft's."
         }
     }
 }
@@ -754,14 +754,14 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
             if admin.username.trimmingCharacters(in: .whitespaces).isEmpty {
                 errors.append("Admin account is enabled but has no username.")
             }
-            if !Keychain.has(id, slot: .adminPassword) {
+            if !SecretStore.has(id, slot: .adminPassword) {
                 errors.append("Admin account has no password set (Accounts tab).")
             }
         }
         if windows.imageSource == .customWim && windows.customWimPath.isEmpty {
             errors.append("Image source is a captured WIM but no path is set.")
         }
-        if windows.productKeyMode == .custom && !Keychain.has(id, slot: .productKey) {
+        if windows.productKeyMode == .custom && !SecretStore.has(id, slot: .productKey) {
             errors.append("Product key mode is “Specific key” but no key is stored.")
         }
         if endUser.mode == .createLocalAccount {
@@ -776,7 +776,7 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
             if identity.domain.isEmpty {
                 errors.append("Domain join is selected but no domain is set.")
             }
-            if identity.domainJoinUser.isEmpty || !Keychain.has(id, slot: .domainPassword) {
+            if identity.domainJoinUser.isEmpty || !SecretStore.has(id, slot: .domainPassword) {
                 errors.append("Domain join needs a username and password.")
             }
         }

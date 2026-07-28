@@ -259,7 +259,7 @@ struct TemplateEditorView: View {
                     )
                 }
                 if draft.windows.productKeyMode == .custom {
-                    KeychainPasswordField(
+                    SecretPasswordField(
                         label: "Product key",
                         templateID: draft.id,
                         slot: .productKey,
@@ -368,7 +368,7 @@ struct TemplateEditorView: View {
                     TextField("Username", text: $draft.admin.username)
                     TextField("Display name", text: $draft.admin.displayName)
                     TextField("Description", text: $draft.admin.accountDescription)
-                    KeychainPasswordField(
+                    SecretPasswordField(
                         label: "Password",
                         templateID: draft.id,
                         slot: .adminPassword,
@@ -411,7 +411,7 @@ struct TemplateEditorView: View {
                 case .createLocalAccount:
                     TextField("Username", text: $draft.endUser.username)
                     TextField("Display name", text: $draft.endUser.displayName)
-                    KeychainPasswordField(
+                    SecretPasswordField(
                         label: "Password",
                         templateID: draft.id,
                         slot: .userPassword
@@ -447,7 +447,7 @@ struct TemplateEditorView: View {
                     TextField("Domain (corp.example.com)", text: $draft.identity.domain)
                     TextField("Computer OU (optional)", text: $draft.identity.organizationalUnit)
                     TextField("Join account", text: $draft.identity.domainJoinUser)
-                    KeychainPasswordField(
+                    SecretPasswordField(
                         label: "Join password",
                         templateID: draft.id,
                         slot: .domainPassword

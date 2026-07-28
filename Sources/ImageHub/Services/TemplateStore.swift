@@ -62,6 +62,9 @@ final class TemplateStore: ObservableObject {
 
         templates = loaded.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         loadWarnings = warnings
+
+        // ImageHub <= 1.0.2 stored one Keychain item per template per slot.
+        SecretStore.migrateLegacyItems(for: templates.map { $0.id })
     }
 
     // MARK: - Mutation
@@ -97,7 +100,7 @@ final class TemplateStore: ObservableObject {
     func delete(_ template: DeploymentTemplate) {
         tombstones.insert(template.id)
         try? FileManager.default.removeItem(at: url(for: template.id))
-        Keychain.deleteAll(for: template.id)
+        SecretStore.deleteAll(for: template.id)
         templates.removeAll { $0.id == template.id }
     }
 
@@ -111,9 +114,9 @@ final class TemplateStore: ObservableObject {
 
         // Secrets are per-template Keychain items; carry them across so the copy
         // is immediately buildable.
-        for slot in Keychain.Slot.allCases {
-            if let secret = Keychain.get(for: template.id, slot: slot) {
-                Keychain.set(secret, for: copy.id, slot: slot)
+        for slot in SecretStore.Slot.allCases {
+            if let secret = SecretStore.get(for: template.id, slot: slot) {
+                SecretStore.set(secret, for: copy.id, slot: slot)
             }
         }
         save(copy)

@@ -22,11 +22,11 @@ struct AnswerFileBuilder {
 
         static func load(for template: DeploymentTemplate) -> ResolvedSecrets {
             var secrets = ResolvedSecrets()
-            secrets.adminPassword = Keychain.get(for: template.id, slot: .adminPassword) ?? ""
-            secrets.userPassword = Keychain.get(for: template.id, slot: .userPassword) ?? ""
-            secrets.domainPassword = Keychain.get(for: template.id, slot: .domainPassword) ?? ""
-            secrets.productKey = Keychain.get(for: template.id, slot: .productKey) ?? ""
-            secrets.wifiPassword = Keychain.get(for: template.id, slot: .wifiPassword) ?? ""
+            secrets.adminPassword = SecretStore.get(for: template.id, slot: .adminPassword) ?? ""
+            secrets.userPassword = SecretStore.get(for: template.id, slot: .userPassword) ?? ""
+            secrets.domainPassword = SecretStore.get(for: template.id, slot: .domainPassword) ?? ""
+            secrets.productKey = SecretStore.get(for: template.id, slot: .productKey) ?? ""
+            secrets.wifiPassword = SecretStore.get(for: template.id, slot: .wifiPassword) ?? ""
             return secrets
         }
     }

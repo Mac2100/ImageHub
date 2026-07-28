@@ -97,6 +97,7 @@ struct GeneralSettingsView: View {
     @AppStorage("ejectAfterBuild") private var ejectAfterBuild = false
     @AppStorage("showToasts") private var showToasts = true
     @AppStorage("defaultLanguage") private var defaultLanguage = "en-US"
+    @AppStorage(SecretStore.backendKey) private var secretBackend = SecretStore.Backend.keychain.rawValue
 
     var body: some View {
         Form {
@@ -130,6 +131,32 @@ struct GeneralSettingsView: View {
                 Toggle("Show toast banners", isOn: $showToasts)
             } header: {
                 Text("In-app")
+            }
+
+            Section {
+                Picker("Store passwords in", selection: $secretBackend) {
+                    ForEach(SecretStore.Backend.allCases) { backend in
+                        Text(backend.label).tag(backend.rawValue)
+                    }
+                }
+                .onChange(of: secretBackend) { _, newValue in
+                    // Setting `backend` migrates the existing secrets across.
+                    if let chosen = SecretStore.Backend(rawValue: newValue) {
+                        SecretStore.backend = chosen
+                        ToastCenter.shared.show(
+                            "Passwords moved to the \(chosen.label.lowercased())"
+                        )
+                    }
+                }
+                SectionCaption(
+                    text: SecretStore.Backend(rawValue: secretBackend)?.help ?? ""
+                )
+            } header: {
+                Text("Template passwords")
+            } footer: {
+                SectionCaption(
+                    text: "Either way these end up in clear text on a drive you build — Windows Setup reads them that way — so treat a finished USB stick as a credential."
+                )
             }
 
             Section {

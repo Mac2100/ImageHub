@@ -34,7 +34,7 @@ struct TemplatesView: View {
             }
             Button("Cancel", role: .cancel) { pendingDeletion = nil }
         } message: {
-            Text("Its stored passwords are removed from your Keychain too. This can't be undone.")
+            Text("Its stored passwords are removed too. This can't be undone.")
         }
     }
 

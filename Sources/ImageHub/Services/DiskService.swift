@@ -184,11 +184,38 @@ enum DiskService {
 
     /// Attaches an ISO read-only and without showing it in Finder.
     static func attachISO(at url: URL, log: @escaping @Sendable (String) -> Void) async throws -> MountedImage {
+        // An attachment left behind by an earlier failed build (or one the user
+        // opened in Finder) makes `attach` fail with "Resource temporarily
+        // unavailable", so clear any existing attachment of this same file first.
+        await detachExisting(imageAt: url, log: log)
+
         log("Mounting \(url.lastPathComponent)…")
-        let result = try await Shell.check(
+        let attach = try await Shell.run(
             hdiutil,
             ["attach", url.path, "-plist", "-nobrowse", "-readonly", "-noverify"]
         )
+        guard attach.succeeded else {
+            let detail = attach.failureMessage
+            if detail.localizedCaseInsensitiveContains("not recognized") {
+                throw DiskError(
+                    message: """
+                        \(url.lastPathComponent) isn't a readable disk image. The usual cause is a \
+                        truncated or still-downloading file — check its size against the source and \
+                        re-import it.
+                        """
+                )
+            }
+            if detail.localizedCaseInsensitiveContains("temporarily unavailable") {
+                throw DiskError(
+                    message: """
+                        \(url.lastPathComponent) is already attached and couldn't be released. \
+                        Eject it in Finder (or run “hdiutil detach”) and try again.
+                        """
+                )
+            }
+            throw DiskError(message: "Couldn't mount \(url.lastPathComponent): \(detail)")
+        }
+        let result = attach
         guard let data = result.stdout.data(using: .utf8),
               let plist = try? PropertyListSerialization.propertyList(
                   from: data, options: [], format: nil
@@ -211,6 +238,39 @@ enum DiskService {
     static func detach(_ image: MountedImage) async {
         let target = image.devEntry ?? image.mountPoint.path
         _ = try? await Shell.run(hdiutil, ["detach", target, "-quiet", "-force"])
+    }
+
+    /// Detaches any current attachment of a given image file.
+    ///
+    /// Without this, one failed build leaves the ISO attached and every
+    /// subsequent build fails to mount it until the Mac is rebooted or the
+    /// volume is ejected by hand.
+    static func detachExisting(
+        imageAt url: URL,
+        log: @escaping @Sendable (String) -> Void
+    ) async {
+        guard let stdout = await Shell.output(hdiutil, ["info", "-plist"]),
+              let data = stdout.data(using: .utf8),
+              let plist = (try? PropertyListSerialization.propertyList(
+                  from: data, options: [], format: nil
+              )) as? [String: Any],
+              let images = plist["images"] as? [[String: Any]]
+        else { return }
+
+        let wanted = url.standardizedFileURL.path
+        for image in images {
+            guard let path = image["image-path"] as? String,
+                  URL(fileURLWithPath: path).standardizedFileURL.path == wanted,
+                  let entities = image["system-entities"] as? [[String: Any]]
+            else { continue }
+
+            log("\(url.lastPathComponent) is already attached — detaching it first.")
+            // Detaching the whole-disk dev entry releases every volume on it.
+            let devEntries = entities.compactMap { $0["dev-entry"] as? String }
+            for entry in devEntries.sorted(by: { $0.count < $1.count }) {
+                _ = try? await Shell.run(hdiutil, ["detach", entry, "-quiet", "-force"])
+            }
+        }
     }
 
     // MARK: - Helpers

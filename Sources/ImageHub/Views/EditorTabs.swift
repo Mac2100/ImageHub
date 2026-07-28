@@ -447,7 +447,7 @@ struct SystemTab: View {
                         Text("Open").tag("open")
                     }
                     if draft.system.wifi.security != "open" {
-                        KeychainPasswordField(
+                        SecretPasswordField(
                             label: "Password",
                             templateID: draft.id,
                             slot: .wifiPassword

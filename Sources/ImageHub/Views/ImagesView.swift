@@ -188,6 +188,11 @@ struct ImagesView: View {
                 Text(library.downloader.statusText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            } else if let copy = library.copyProgress {
+                ProgressView(value: copy)
+                Text("Copying — \(Int(copy * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } else if let hash = library.hashProgress {
                 ProgressView(value: hash)
                 Text("Hashing — \(Int(hash * 100))%")
@@ -258,19 +263,20 @@ struct ImagesView: View {
         let sizeText = size > 0 ? size.byteSize : "several GB"
 
         let alert = NSAlert()
-        alert.messageText = "Copy this ISO into ImageHub's library?"
+        alert.messageText = "How should ImageHub keep this ISO?"
         alert.informativeText = """
-            Copying uses another \(sizeText) of disk but keeps the image available if the \
-            original moves or gets unmounted. Linking leaves the file where it is.
+            Linking uses it where it is — nothing is duplicated, and it's the better \
+            choice unless the file lives somewhere temporary. Copying spends another \
+            \(sizeText) of disk so the image survives the original being moved or deleted.
             """
-        alert.addButton(withTitle: "Copy")
         alert.addButton(withTitle: "Link in Place")
+        alert.addButton(withTitle: "Copy")
         alert.addButton(withTitle: "Cancel")
         let response = alert.runModal()
         guard response != .alertThirdButtonReturn else { return }
 
         Task {
-            await library.importISO(at: url, copyIntoLibrary: response == .alertFirstButtonReturn)
+            await library.importISO(at: url, copyIntoLibrary: response == .alertSecondButtonReturn)
         }
     }
 
@@ -318,7 +324,16 @@ struct ImageRow: View {
                             Chip(text: "Missing", symbol: "exclamationmark.triangle.fill", tint: .red)
                         }
                         if image.installImageNeedsSplit {
-                            Chip(text: "Needs split", symbol: "scissors", tint: .orange)
+                            Chip(
+                                text: WimTools.isAvailable ? "Splits on build" : "Needs wimlib",
+                                symbol: "scissors",
+                                tint: WimTools.isAvailable ? .secondary : .orange
+                            )
+                            .help(
+                                WimTools.isAvailable
+                                    ? "This image's install.wim is over FAT32's 4 GB file limit, so ImageHub splits it automatically while building. Nothing for you to do."
+                                    : "This image's install.wim is over 4 GB and wimlib isn't installed, so it can't be split. See Settings → Tools."
+                            )
                         }
                         if image.lastVerifiedAt != nil {
                             Chip(text: "Verified", symbol: "checkmark.seal.fill", tint: .green)
@@ -408,12 +423,23 @@ struct ImageRow: View {
                 .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 7))
             }
 
-            if image.installImageNeedsSplit && !WimTools.isAvailable {
-                NoticeBanner(
-                    kind: .warning,
-                    title: "wimlib needed for this image",
-                    messages: [WimTools.missingToolMessage]
-                )
+            if image.installImageNeedsSplit {
+                if WimTools.isAvailable {
+                    NoticeBanner(
+                        kind: .info,
+                        title: "Nothing to do about the split",
+                        messages: [
+                            "install.wim is \(image.installImageSizeBytes.byteSize), over FAT32's 4 GB per-file limit, so ImageHub splits it into install.swm parts as part of building the drive. Windows Setup reads those natively.",
+                            "It is not a separate step and it doesn't change this ISO — the original is left alone."
+                        ]
+                    )
+                } else {
+                    NoticeBanner(
+                        kind: .warning,
+                        title: "wimlib needed for this image",
+                        messages: [WimTools.missingToolMessage]
+                    )
+                }
             }
 
             HStack(spacing: 8) {

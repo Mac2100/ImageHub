@@ -77,11 +77,11 @@ struct PathField: View {
     }
 }
 
-/// A password field backed by the Keychain rather than the template JSON.
-struct KeychainPasswordField: View {
+/// A password field backed by `SecretStore` rather than the template JSON.
+struct SecretPasswordField: View {
     let label: String
     let templateID: UUID
-    let slot: Keychain.Slot
+    let slot: SecretStore.Slot
     var footer: String?
 
     @State private var value = ""
@@ -109,11 +109,11 @@ struct KeychainPasswordField: View {
                     .help(revealed ? "Hide" : "Show")
 
                     Button("Save") {
-                        Keychain.set(value, for: templateID, slot: slot)
-                        stored = Keychain.has(templateID, slot: slot)
+                        SecretStore.set(value, for: templateID, slot: slot)
+                        stored = SecretStore.has(templateID, slot: slot)
                         ToastCenter.shared.show(
                             stored ? "\(slot.label) saved" : "\(slot.label) cleared",
-                            detail: "Stored in your macOS Keychain"
+                            detail: "Stored in the \(SecretStore.backend.label.lowercased())"
                         )
                     }
                     .controlSize(.small)
@@ -127,7 +127,7 @@ struct KeychainPasswordField: View {
                     .foregroundStyle(stored ? Color.green : Color.orange)
                 Text(
                     stored
-                        ? "Stored in the Keychain."
+                        ? "Stored in the \(SecretStore.backend.label.lowercased())."
                         : "Not set yet."
                 )
                 .font(.caption)
@@ -140,11 +140,11 @@ struct KeychainPasswordField: View {
             }
         }
         .onAppear {
-            stored = Keychain.has(templateID, slot: slot)
+            stored = SecretStore.has(templateID, slot: slot)
             value = ""
         }
         .onChange(of: templateID) { _, _ in
-            stored = Keychain.has(templateID, slot: slot)
+            stored = SecretStore.has(templateID, slot: slot)
             value = ""
             revealed = false
         }

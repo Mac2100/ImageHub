@@ -7,7 +7,6 @@ import Foundation
 /// image demands it — a split `install*.swm` instead of `install.wim`.
 @MainActor
 enum USBWriter {
-    static let rsync = "/usr/bin/rsync"
 
     struct WriteError: LocalizedError {
         let message: String
@@ -167,33 +166,29 @@ enum USBWriter {
         job: BuildJob,
         log: @escaping @Sendable (String) -> Void
     ) async throws {
-        // FAT32 has no permissions, ownership, or symlinks, so those are all
-        // suppressed rather than left to fail file by file.
-        let arguments = [
-            "-rt",
-            "--no-perms", "--no-owner", "--no-group",
-            "--modify-window=2",
-            "--info=progress2",
-            "--exclude=sources/install.wim",
-            "--exclude=sources/install.esd",
-            "--exclude=.DS_Store",
-            "--exclude=System Volume Information",
-            mount.path + "/",
-            volume.path + "/"
-        ]
+        // install.wim/.esd are handled separately — they may need splitting.
+        let excluded: Set<String> = ["sources/install.wim", "sources/install.esd"]
 
-        let handler: @Sendable (String) -> Void = { line in
-            if let percent = parsePercent(line) {
-                Task { @MainActor in
-                    job.stageProgress = percent
-                    job.detail = "Copying Windows Setup files — \(Int(percent * 100))%"
-                }
-            } else {
-                log(line)
-            }
-        }
+        let plan = try await Task.detached(priority: .userInitiated) {
+            try FileCopier.plan(directory: mount, excluding: excluded)
+        }.value
 
-        try await Shell.check(rsync, arguments, onLine: handler)
+        log("Copying \(plan.fileCount) files (\(plan.totalBytes.byteSize))…")
+
+        try await Task.detached(priority: .userInitiated) {
+            try FileCopier.copy(
+                plan: plan,
+                to: volume,
+                progress: { fraction, _ in
+                    Task { @MainActor in
+                        job.stageProgress = fraction
+                        job.detail = "Copying Windows Setup files — \(Int(fraction * 100))%"
+                    }
+                },
+                isCancelled: { MainActor.assumeIsolated { job.cancelRequested } }
+            )
+        }.value
+
         job.stageProgress = 1
     }
 
@@ -264,26 +259,20 @@ enum USBWriter {
         job: BuildJob,
         log: @escaping @Sendable (String) -> Void
     ) async throws {
-        let handler: @Sendable (String) -> Void = { line in
-            if let percent = parsePercent(line) {
-                Task { @MainActor in
-                    job.stageProgress = percent
-                    job.detail = "Writing \(source.lastPathComponent) — \(Int(percent * 100))%"
-                }
-            } else {
-                log(line)
-            }
-        }
-        try await Shell.check(
-            rsync,
-            [
-                "-t", "--no-perms", "--no-owner", "--no-group",
-                "--info=progress2",
-                source.path,
-                destination.path
-            ],
-            onLine: handler
-        )
+        let name = source.lastPathComponent
+        try await Task.detached(priority: .userInitiated) {
+            try FileCopier.copyFile(
+                from: source,
+                to: destination,
+                progress: { fraction in
+                    Task { @MainActor in
+                        job.stageProgress = fraction
+                        job.detail = "Writing \(name) — \(Int(fraction * 100))%"
+                    }
+                },
+                isCancelled: { MainActor.assumeIsolated { job.cancelRequested } }
+            )
+        }.value
         job.stageProgress = 1
     }
 
@@ -338,15 +327,5 @@ enum USBWriter {
     private static func fileSize(of url: URL) -> Int64 {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-    }
-
-    /// Pulls "23%" out of an `rsync --info=progress2` line.
-    nonisolated private static func parsePercent(_ line: String) -> Double? {
-        guard let range = line.range(of: #"\d{1,3}%"#, options: .regularExpression) else {
-            return nil
-        }
-        let digits = line[range].dropLast()
-        guard let value = Double(digits) else { return nil }
-        return min(1, max(0, value / 100))
     }
 }

@@ -11,6 +11,7 @@ final class ImageLibrary: ObservableObject {
     @Published var isBusy = false
     @Published var busyMessage = ""
     @Published var hashProgress: Double?
+    @Published var copyProgress: Double?
 
     let downloader = Downloader()
 
@@ -75,6 +76,7 @@ final class ImageLibrary: ObservableObject {
             isBusy = false
             busyMessage = ""
             hashProgress = nil
+            copyProgress = nil
         }
 
         let fm = FileManager.default
@@ -83,6 +85,7 @@ final class ImageLibrary: ObservableObject {
             return nil
         }
 
+        let sourceSize = Self.fileSize(url)
         var image = WindowsImage()
         image.origin = .imported
         image.sourceURL = url.path
@@ -92,10 +95,32 @@ final class ImageLibrary: ObservableObject {
         if copyIntoLibrary {
             do {
                 try fm.createDirectory(at: AppPaths.images, withIntermediateDirectories: true)
-                finalURL = AppPaths.images
+                let destination = AppPaths.images
                     .appendingPathComponent("\(image.id.uuidString)-\(url.lastPathComponent)")
                 busyMessage = "Copying \(url.lastPathComponent) into the library…"
-                try fm.copyItem(at: url, to: finalURL)
+
+                // Copied on a background task with a verified byte count. This
+                // used to run synchronously on the main actor, which froze the
+                // app for minutes on an 8 GB ISO and, if interrupted, left a
+                // truncated file that was silently added to the library and only
+                // failed much later with "image not recognized".
+                let store = self
+                let copied = try await Task.detached(priority: .userInitiated) {
+                    try FileCopier.copyVerified(from: url, to: destination) { fraction in
+                        Task { @MainActor in store.copyProgress = fraction }
+                    }
+                }.value
+
+                guard copied == sourceSize else {
+                    try? fm.removeItem(at: destination)
+                    ToastCenter.shared.show(
+                        "The copy didn't complete",
+                        detail: "Copied \(copied.byteSize) of \(sourceSize.byteSize). Nothing was added.",
+                        style: .error
+                    )
+                    return nil
+                }
+                finalURL = destination
             } catch {
                 ToastCenter.shared.show(
                     "Couldn't copy the ISO",
@@ -114,7 +139,12 @@ final class ImageLibrary: ObservableObject {
             image.release = .win10
         }
 
-        await inspect(&image)
+        if let problem = await inspect(&image) {
+            if image.managed { try? fm.removeItem(at: finalURL) }
+            ToastCenter.shared.show("Couldn't read that ISO", detail: problem, style: .error)
+            return nil
+        }
+
         images.insert(image, at: 0)
         persist()
         ToastCenter.shared.show("Image added", detail: image.displayName)
@@ -252,16 +282,20 @@ final class ImageLibrary: ObservableObject {
     // MARK: - Inspection & verification
 
     /// Mounts the ISO once to read its edition list out of `install.wim`.
-    private func inspect(_ image: inout WindowsImage) async {
+    /// Returns a problem description when the image can't be used.
+    @discardableResult
+    private func inspect(_ image: inout WindowsImage) async -> String? {
         busyMessage = "Reading editions from \(image.url.lastPathComponent)…"
-        guard let mounted = try? await DiskService.attachISO(at: image.url, log: { _ in }) else {
-            return
+
+        let mounted: DiskService.MountedImage
+        do {
+            mounted = try await DiskService.attachISO(at: image.url, log: { _ in })
+        } catch {
+            return error.localizedDescription
         }
-        defer { Task { await DiskService.detach(mounted) } }
 
         let sources = mounted.mountPoint.appendingPathComponent("sources", isDirectory: true)
-        let candidates = ["install.wim", "install.esd"]
-        for candidate in candidates {
+        for candidate in ["install.wim", "install.esd"] {
             let file = sources.appendingPathComponent(candidate)
             guard FileManager.default.fileExists(atPath: file.path) else { continue }
             image.installImageName = candidate
@@ -275,6 +309,18 @@ final class ImageLibrary: ObservableObject {
         if image.editions.contains(where: { $0.name.contains("Windows 10") }) {
             image.release = .win10
         }
+
+        // Awaited rather than fired off in a `defer`: a leaked attachment makes
+        // every later build fail to mount the same ISO.
+        await DiskService.detach(mounted)
+
+        if image.installImageName.isEmpty {
+            return """
+                \(image.url.lastPathComponent) mounted but has no sources/install.wim or \
+                install.esd, so it isn't Windows installation media.
+                """
+        }
+        return nil
     }
 
     /// Re-reads the edition list for an image already in the library.
