@@ -95,6 +95,11 @@ enum PayloadBuilder {
             var wallpaper: String
             var lockScreen: String
             var startLayout: String
+            var organizationName: String
+            var logo: String
+            var supportPhone: String
+            var supportURL: String
+            var showProvisioningScreen: Bool
             var wifi: Wifi
             var registryTweaks: [Registry]
         }
@@ -202,6 +207,7 @@ enum PayloadBuilder {
         let wallpaper = try copyAsset(template.system.wallpaperPath, as: "Wallpaper")
         let lockScreen = try copyAsset(template.system.lockScreenPath, as: "LockScreen")
         let startLayout = try copyAsset(template.system.startLayoutPath, as: "StartLayout")
+        let logo = try copyAsset(template.system.logoPath, as: "Logo")
 
         // 4. Custom scripts.
         var scripts: [Config.Script] = []
@@ -231,7 +237,8 @@ enum PayloadBuilder {
             scripts: scripts,
             wallpaper: wallpaper,
             lockScreen: lockScreen,
-            startLayout: startLayout
+            startLayout: startLayout,
+            logo: logo
         )
 
         let encoder = JSONEncoder()
@@ -261,7 +268,8 @@ enum PayloadBuilder {
         scripts: [Config.Script],
         wallpaper: String,
         lockScreen: String,
-        startLayout: String
+        startLayout: String,
+        logo: String
     ) -> Config {
         let system = template.system
         return Config(
@@ -318,6 +326,11 @@ enum PayloadBuilder {
                 wallpaper: wallpaper,
                 lockScreen: lockScreen,
                 startLayout: startLayout,
+                organizationName: system.organizationName,
+                logo: logo,
+                supportPhone: system.supportPhone,
+                supportURL: system.supportURL,
+                showProvisioningScreen: system.showProvisioningScreen,
                 wifi: Config.Wifi(
                     enabled: system.wifi.enabled,
                     ssid: system.wifi.ssid,

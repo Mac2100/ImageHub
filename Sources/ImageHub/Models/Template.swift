@@ -453,6 +453,17 @@ struct SystemSpec: Codable, Equatable, Hashable {
     var lockScreenPath: String = ""
     var startLayoutPath: String = ""
 
+    // MARK: Branding
+    /// Shown on the provisioning screen and written into Windows' OEM
+    /// information, which surfaces in Settings → About.
+    var organizationName: String = ""
+    var logoPath: String = ""
+    var supportPhone: String = ""
+    var supportURL: String = ""
+    /// Replaces the bare PowerShell console during provisioning with a
+    /// full-screen branded progress window.
+    var showProvisioningScreen: Bool = true
+
     /// Skips the TPM 2.0 / Secure Boot / RAM / CPU checks so Windows 11 installs
     /// on older fleet hardware.
     var bypassWin11Requirements: Bool = false
@@ -578,6 +589,11 @@ struct SystemSpec: Codable, Equatable, Hashable {
         wallpaperPath = c.v(.wallpaperPath, "")
         lockScreenPath = c.v(.lockScreenPath, "")
         startLayoutPath = c.v(.startLayoutPath, "")
+        organizationName = c.v(.organizationName, "")
+        logoPath = c.v(.logoPath, "")
+        supportPhone = c.v(.supportPhone, "")
+        supportURL = c.v(.supportURL, "")
+        showProvisioningScreen = c.v(.showProvisioningScreen, true)
         bypassWin11Requirements = c.v(.bypassWin11Requirements, false)
         bypassNetworkRequirement = c.v(.bypassNetworkRequirement, true)
     }
@@ -756,6 +772,14 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         }
         if system.wifi.enabled && system.wifi.ssid.isEmpty {
             errors.append("Wi-Fi provisioning is on but no SSID is set.")
+        }
+        for (label, path) in [
+            ("Logo", system.logoPath),
+            ("Wallpaper", system.wallpaperPath),
+            ("Lock screen", system.lockScreenPath),
+            ("Start layout", system.startLayoutPath)
+        ] where !path.isEmpty && !FileManager.default.fileExists(atPath: path) {
+            errors.append("\(label) image is missing: \((path as NSString).lastPathComponent)")
         }
         for app in apps where app.enabled && !app.isActionable {
             errors.append("“\(app.displayName)” is enabled but incomplete.")

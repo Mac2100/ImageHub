@@ -45,6 +45,12 @@ screen. No keystrokes in between.
   pre-create a named local account, or have provisioning prompt the technician
   at first boot. Workgroup, Active Directory domain join, or leave the device
   unjoined for Entra ID / Intune enrolment.
+- **Branded setup screen** — provisioning takes 10–40 minutes and otherwise runs
+  in a bare PowerShell console. Instead it shows a full-screen screen with your
+  logo, organisation name, the current step and a progress bar. It runs as its own
+  process polling a status file, so a ten-minute app install can't make it look
+  hung, and it can't slow provisioning down. Organisation name, logo and support
+  contact also land in Windows' OEM information, so they show in Settings → About.
 - **Custom PowerShell** — hooks in three phases (Setup `specialize`,
   provisioning, finalize) for anything the template can't express.
 - **Live build view** — eight stages with per-stage progress, a streaming log,
@@ -202,7 +208,7 @@ Sources/ImageHub/          SwiftUI app
   Services/                Disk, ISO, WIM, copying, answer file, payload, updates
   ViewModels/AppState      App-wide state and the build queue
   Views/                   UI, theme system, settings
-Shared/payload/            Provision.ps1 — copied onto every drive (shared)
+Shared/payload/            Provision.ps1 + Splash.ps1 — copied onto every drive
 Shared/schema/             JSON Schema for templates and the payload config
 Windows/ImageHub.ps1       Windows-side builder over the same schema
 scripts/make_app.sh        Universal build → .app, .zip, .dmg

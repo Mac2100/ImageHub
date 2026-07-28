@@ -217,6 +217,23 @@
         "wallpaperPath": { "type": "string", "default": "" },
         "lockScreenPath": { "type": "string", "default": "" },
         "startLayoutPath": { "type": "string", "default": "" },
+        "organizationName": {
+          "type": "string",
+          "default": "",
+          "description": "Shown on the provisioning screen and written to Windows' OEMInformation."
+        },
+        "logoPath": {
+          "type": "string",
+          "default": "",
+          "description": "Image copied into the payload, shown on the provisioning screen and in Settings > About."
+        },
+        "supportPhone": { "type": "string", "default": "" },
+        "supportURL": { "type": "string", "default": "" },
+        "showProvisioningScreen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Replaces the bare PowerShell console during provisioning with a full-screen branded progress screen (Splash.ps1)."
+        },
         "bypassWin11Requirements": {
           "type": "boolean",
           "default": false,

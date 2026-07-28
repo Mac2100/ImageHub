@@ -72,6 +72,8 @@ function Invoke-Step {
         [switch]$Critical
     )
     Write-Log -Level STEP -Message $Name
+    $script:StepIndex++
+    Set-Status -Step $Name
     try {
         & $Action
         return $true
@@ -132,6 +134,89 @@ $System = Get-Setting $Config 'system'
 $Admin = Get-Setting $Config 'admin'
 $EndUser = Get-Setting $Config 'endUser'
 $Identity = Get-Setting $Config 'identity'
+
+# ---------------------------------------------------------------------------
+# Progress screen
+# ---------------------------------------------------------------------------
+
+# Splash.ps1 runs as its own process and polls this file. Keeping it out of
+# process matters: a single app install can take minutes, and a window sharing
+# this thread would sit there greyed out as "Not Responding".
+$StatusPath = Join-Path $Root 'status.json'
+$script:StepIndex = 0
+$script:StepTotal = 12
+$script:SplashProcess = $null
+
+function Resolve-AssetPath {
+    param([string]$Relative)
+    if (-not $Relative) { return '' }
+    $staged = Join-Path 'C:\ProgramData\ImageHub\Assets' ([System.IO.Path]::GetFileName($Relative))
+    if (Test-Path -LiteralPath $staged) { return $staged }
+    $local = Join-Path $Root $Relative
+    if (Test-Path -LiteralPath $local) { return $local }
+    return ''
+}
+
+function Set-Status {
+    param(
+        [string]$Step,
+        [string]$Detail = '',
+        [ValidateSet('running', 'done', 'failed')][string]$State = 'running',
+        [string]$Note = ''
+    )
+    try {
+        [ordered]@{
+            state            = $State
+            step             = $Step
+            detail           = $Detail
+            index            = $script:StepIndex
+            total            = $script:StepTotal
+            organizationName = [string](Get-Setting $System 'organizationName' '')
+            logo             = Resolve-AssetPath ([string](Get-Setting $System 'logo' ''))
+            supportPhone     = [string](Get-Setting $System 'supportPhone' '')
+            supportUrl       = [string](Get-Setting $System 'supportURL' '')
+            failures         = @($script:Failures)
+            warnings         = @($script:Warnings)
+            note             = $Note
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $StatusPath -Encoding UTF8
+    } catch {
+        # The screen is a convenience; never let it interrupt provisioning.
+    }
+}
+
+# Rough step count so the bar advances sensibly rather than sitting at zero.
+$script:StepTotal = 12 + @(Get-Setting $Config 'apps' @()).Count `
+    + @(Get-Setting $Config 'scripts' @()).Count
+
+if (Get-Setting $System 'showProvisioningScreen' $true) {
+    # The logo has to exist before the screen starts, so stage assets early.
+    $logoRelative = [string](Get-Setting $System 'logo' '')
+    if ($logoRelative) {
+        try {
+            New-Item -ItemType Directory -Path 'C:\ProgramData\ImageHub\Assets' -Force | Out-Null
+            $logoSource = Join-Path $Root $logoRelative
+            if (Test-Path -LiteralPath $logoSource) {
+                Copy-Item -LiteralPath $logoSource -Destination 'C:\ProgramData\ImageHub\Assets' -Force
+            }
+        } catch { }
+    }
+
+    Set-Status -Step 'Starting setup…'
+    $splash = Join-Path $Root 'Splash.ps1'
+    if (Test-Path -LiteralPath $splash) {
+        try {
+            $script:SplashProcess = Start-Process -FilePath 'powershell.exe' -PassThru `
+                -WindowStyle Hidden `
+                -ArgumentList @(
+                    '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                    '-File', "`"$splash`"", '-StatusPath', "`"$StatusPath`""
+                )
+            Write-Log "Progress screen started (PID $($script:SplashProcess.Id))."
+        } catch {
+            Write-Log -Level WARN -Message "Couldn't start the progress screen: $($_.Exception.Message)"
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # 1. Network — first, because everything else may need it
@@ -513,10 +598,15 @@ if ($apps.Count -gt 0) {
     }
 
     Write-Log -Level STEP -Message "Installing $($apps.Count) application(s)"
+    $appNumber = 0
     foreach ($app in $apps) {
         $name = Get-Setting $app 'name' 'Unnamed app'
         $source = Get-Setting $app 'source' 'winget'
         $required = Get-Setting $app 'required' $false
+
+        $appNumber++
+        $script:StepIndex++
+        Set-Status -Step "Installing applications ($appNumber of $($apps.Count))" -Detail $name
 
         try {
             switch ($source) {
@@ -626,6 +716,51 @@ if ($wallpaper -or $lockScreen) {
                 Write-Log -Level WARN -Message "Lock screen asset missing: $source"
             }
         }
+    }
+}
+
+$organization = Get-Setting $System 'organizationName' ''
+if ($organization -or (Get-Setting $System 'supportPhone' '') -or (Get-Setting $System 'supportURL' '')) {
+    Invoke-Step 'Writing OEM support information' {
+        # Shows up in Settings → About and the classic System control panel.
+        $oem = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation'
+        if ($organization) {
+            Set-RegistryValue -Path $oem -Name 'Manufacturer' -Value $organization -Type String
+        }
+        $phone = Get-Setting $System 'supportPhone' ''
+        if ($phone) {
+            Set-RegistryValue -Path $oem -Name 'SupportPhone' -Value $phone -Type String
+        }
+        $url = Get-Setting $System 'supportURL' ''
+        if ($url) {
+            Set-RegistryValue -Path $oem -Name 'SupportURL' -Value $url -Type String
+        }
+
+        $logoRelativePath = [string](Get-Setting $System 'logo' '')
+        if ($logoRelativePath) {
+            $source = Join-Path $Root $logoRelativePath
+            if (Test-Path -LiteralPath $source) {
+                New-Item -ItemType Directory -Path 'C:\ProgramData\ImageHub\Assets' -Force | Out-Null
+                $target = Join-Path 'C:\ProgramData\ImageHub\Assets' ([System.IO.Path]::GetFileName($source))
+                Copy-Item -LiteralPath $source -Destination $target -Force
+                # Settings → About wants a bitmap; anything else is ignored
+                # silently, so convert rather than hope.
+                try {
+                    Add-Type -AssemblyName System.Drawing
+                    $bitmapPath = [System.IO.Path]::ChangeExtension($target, '.bmp')
+                    $image = [System.Drawing.Image]::FromFile($target)
+                    try {
+                        $image.Save($bitmapPath, [System.Drawing.Imaging.ImageFormat]::Bmp)
+                    } finally {
+                        $image.Dispose()
+                    }
+                    Set-RegistryValue -Path $oem -Name 'Logo' -Value $bitmapPath -Type String
+                } catch {
+                    Write-Log -Level WARN -Message "Couldn't convert the logo to a bitmap: $($_.Exception.Message)"
+                }
+            }
+        }
+        Write-Log -Level OK -Message "OEM information written."
     }
 }
 
@@ -930,7 +1065,20 @@ Write-Host ''
 
 Write-Log "Provisioning complete. Failures: $($script:Failures.Count), warnings: $($script:Warnings.Count)."
 
-if (-not $NoPause) {
+$script:StepIndex = $script:StepTotal
+Set-Status `
+    -Step 'Finished' `
+    -State $(if ($script:Failures.Count -gt 0) { 'failed' } else { 'done' }) `
+    -Note ([string](Get-Setting $EndUser 'welcomeNote' ''))
+
+# The progress screen is full-screen and on top, so a console prompt behind it
+# would just look like a hang. It has its own Close button.
+$splashRunning = $false
+if ($script:SplashProcess) {
+    try { $splashRunning = -not $script:SplashProcess.HasExited } catch { $splashRunning = $false }
+}
+
+if (-not $NoPause -and -not $splashRunning) {
     Write-Host '  Press any key to close this window…' -ForegroundColor DarkGray
     try {
         $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')

@@ -510,6 +510,42 @@ struct SystemTab: View {
             }
 
             Section {
+                TextField("Organisation name", text: $draft.system.organizationName)
+                PathField(
+                    label: "Logo",
+                    path: $draft.system.logoPath,
+                    prompt: "None",
+                    types: [.image]
+                )
+                TextField("Support phone", text: $draft.system.supportPhone)
+                TextField("Support URL", text: $draft.system.supportURL)
+                SectionCaption(
+                    text: "Written into Windows' OEM information, so it shows in Settings → About, and used on the setup screen below."
+                )
+            } header: {
+                Text("Organisation")
+            }
+
+            Section {
+                Toggle("Show a branded setup screen while provisioning", isOn: $draft.system.showProvisioningScreen)
+                SectionCaption(
+                    text: "Provisioning takes 10–40 minutes and otherwise runs in a bare PowerShell window. This replaces it with a full-screen screen showing your logo, the current step, and a progress bar. It runs as its own process, so it can't slow provisioning down or hang it."
+                )
+                if draft.system.showProvisioningScreen {
+                    NoticeBanner(
+                        kind: .info,
+                        title: "What it can and can't cover",
+                        messages: [
+                            "This appears once Windows is installed and provisioning starts — the part someone actually sits and watches.",
+                            "The earlier screens can't be branded from a Mac: the logo before Windows loads comes from the target machine's own firmware, and Windows Setup's UI isn't themable."
+                        ]
+                    )
+                }
+            } header: {
+                Text("Setup screen")
+            }
+
+            Section {
                 PathField(
                     label: "Desktop wallpaper",
                     path: $draft.system.wallpaperPath,

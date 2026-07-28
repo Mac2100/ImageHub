@@ -8,6 +8,8 @@ pulled out.
 | File | Purpose |
 | --- | --- |
 | `Provision.ps1` | The whole first-boot provisioning run. Reads `config.json`. |
+| `Splash.ps1` | Full-screen branded progress screen. Runs as its own process and polls `status.json`, so a long install can't make it look hung. |
+| `status.json` | Written on the target machine: what provisioning is doing right now. |
 | `config.json` | Written at build time from the deployment template. **Not in git** — it's generated per drive and contains resolved secrets. |
 | `template.json` | An audit copy of the template the drive was built from. |
 | `Installers/` | Bundled MSI/EXE installers, when the template has any. |
@@ -51,7 +53,8 @@ Useful during development:
 8. **Optional features** — DISM features such as `NetFx3`.
 9. **Applications** — winget packages, bundled installers, inline scripts.
    Waits for internet first when any winget app is present.
-10. **Branding** — wallpaper, lock screen, Start layout.
+10. **Branding** — OEM support information (Settings → About), wallpaper, lock
+    screen, Start layout.
 11. **Windows Update policy**, and optionally installs pending updates.
 12. **Accounts** — password-change flags, or the interactive end-user prompt.
 13. **BitLocker** — enables it and writes the recovery key to `logs\`.
