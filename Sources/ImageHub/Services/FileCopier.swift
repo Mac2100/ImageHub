@@ -150,6 +150,14 @@ enum FileCopier {
         let attributes = try? fm.attributesOfItem(atPath: source.path)
         let total = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
 
+        // fsync costs whole seconds on a cheap flash controller: measured on a
+        // real build, 975 small files took 20 minutes at 0.73 MB/s while wimlib
+        // writing 7.5 GB to the same stick managed 2.67 MB/s. One flush per file
+        // was the entire difference. Flush only files big enough for the cost to
+        // disappear into the transfer; the rest are flushed by the OS, and the
+        // build ejects the volume when it finishes.
+        let flushWhenDone = total >= 64 * 1024 * 1024
+
         if fm.fileExists(atPath: destination.path) {
             try fm.removeItem(at: destination)
         }
@@ -175,7 +183,7 @@ enum FileCopier {
             written += Int64(chunk.count)
             if total > 0 { progress(min(1, Double(written) / Double(total))) }
         }
-        try output.synchronize()
+        if flushWhenDone { try output.synchronize() }
 
         // A short write means the volume filled up or the source vanished; that
         // has to be an error here rather than unbootable media discovered later.

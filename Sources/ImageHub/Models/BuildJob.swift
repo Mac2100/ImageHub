@@ -99,9 +99,9 @@ final class BuildJob: ObservableObject, Identifiable {
 
     /// When each stage started, and how long the finished ones took.
     ///
-    /// Without this, "the build has been going 45 minutes" says nothing about
-    /// which step is slow — and on this workload one step can legitimately take
-    /// twenty times longer than the rest put together.
+    /// Without this, "the build has been running 45 minutes" says nothing about
+    /// which step is slow — and on this workload one step legitimately takes
+    /// longer than all the others together.
     @Published var stageStartedAt: [Stage: Date] = [:]
     @Published var stageDuration: [Stage: TimeInterval] = [:]
 
@@ -159,7 +159,7 @@ final class BuildJob: ObservableObject, Identifiable {
     }
 
     /// How long `stage` has been running, or took. `now` is a parameter so a view
-    /// can pass its own tick and actually depend on it.
+    /// can pass its own tick and genuinely depend on it.
     func duration(of stage: Stage, at now: Date = Date()) -> TimeInterval? {
         if let done = stageDuration[stage] { return done }
         guard stages[stage] == .running, let started = stageStartedAt[stage] else { return nil }
@@ -209,9 +209,20 @@ final class BuildJob: ObservableObject, Identifiable {
         detail = "Cancelled"
     }
 
-    func append(_ text: String, isError: Bool = false) {
-        log.append(LogLine(timestamp: Date(), text: text, isError: isError))
-        // Long rsync runs can emit thousands of lines; keep the tail.
+    /// `at` is when the line was *produced*. Background work hops to the main
+    /// actor to log, so a line produced during the payload step can land after a
+    /// line produced by the verify step — which is how a real build log ended up
+    /// claiming it verified the media before writing the payload. Timestamping at
+    /// the source and inserting in order keeps the log a truthful record.
+    func append(_ text: String, at moment: Date = Date(), isError: Bool = false) {
+        let line = LogLine(timestamp: moment, text: text, isError: isError)
+        if let last = log.last, last.timestamp > moment {
+            let index = log.lastIndex { $0.timestamp <= moment }.map { $0 + 1 } ?? 0
+            log.insert(line, at: index)
+        } else {
+            log.append(line)
+        }
+        // A long split emits thousands of progress lines; keep the tail.
         if log.count > 2000 {
             log.removeFirst(log.count - 2000)
         }

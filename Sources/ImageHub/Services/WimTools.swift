@@ -79,9 +79,8 @@ enum WimTools {
 
     /// Splits `source` into `install.swm`, `install2.swm`, … next to `destination`.
     /// `destination` is the path of the first part.
-    ///
-    /// `progress` receives 0…1 parsed from wimlib's own output, so the build view
-    /// shows real movement on what is usually the longest stage of a build.
+    /// `progress` receives 0…1 parsed from wimlib's own output, so the longest
+    /// stage of a build shows real movement instead of a static bar.
     static func split(
         source: URL,
         firstPart destination: URL,
@@ -104,10 +103,11 @@ enum WimTools {
         )
     }
 
-    /// Pulls the fraction out of `Splitting WIM: 2011 MiB of 7177 MiB (28%) written, part 1 of 3`.
+    /// Pulls the fraction out of
+    /// `Splitting WIM: 2011 MiB of 7177 MiB (28%) written, part 1 of 3`.
     ///
-    /// The MiB values are used rather than wimlib's own percentage because they
-    /// have more resolution and the percentage is rounded to a whole number.
+    /// Uses the MiB values rather than wimlib's own percentage, which is rounded
+    /// to whole numbers and so barely moves on a 7 GB image.
     static func splitFraction(from line: String) -> Double? {
         guard line.contains("MiB of") else { return nil }
         let numbers = line

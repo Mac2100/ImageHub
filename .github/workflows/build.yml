@@ -148,6 +148,64 @@ jobs:
           grep -q "ImageHub\\\\Provision.ps1" /tmp/autounattend.xml \
             || { echo "::error::answer file never launches Provision.ps1"; exit 1; }
 
+          # Element order inside a component is part of the unattend schema, and
+          # Setup rejects the entire answer file when it's wrong — it does not
+          # skip the offending element. xmllint cannot see this; a well-formed
+          # file shipped for weeks with RunSynchronous after UserData, which made
+          # every windowsPE pass invalid. Check the sequences we actually emit.
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+
+          NS = {'u': 'urn:schemas-microsoft-com:unattend'}
+          # Schema order for the components we write, in the order Setup expects.
+          ORDER = {
+              'Microsoft-Windows-Setup': [
+                  'ComplianceCheck', 'Diagnostics', 'DiskConfiguration',
+                  'DynamicUpdate', 'EnableFirewall', 'EnableNetwork',
+                  'ImageInstall', 'LogPath', 'Multivariant', 'Restart',
+                  'RunAsynchronous', 'RunSynchronous', 'UpgradeData',
+                  'UserData', 'UseConfigurationSet',
+                  'WindowsDeploymentServices',
+              ],
+              # Only this component is checked. International-Core-WinPE is
+              # deliberately left out: its canonical form puts SetupUILanguage
+              # first rather than alphabetically, so asserting an order here would
+              # risk failing CI over something unverified.
+          }
+
+          tree = ET.parse('/tmp/autounattend.xml')
+          failures = []
+          for settings in tree.getroot().findall('u:settings', NS):
+              which = settings.get('pass')
+              for component in settings.findall('u:component', NS):
+                  name = component.get('name')
+                  expected = ORDER.get(name)
+                  if not expected:
+                      continue
+                  seen = [c.tag.split('}')[-1] for c in component]
+                  ranks, unknown = [], []
+                  for tag in seen:
+                      if tag in expected:
+                          ranks.append((expected.index(tag), tag))
+                      else:
+                          unknown.append(tag)
+                  if unknown:
+                      failures.append(
+                          f"{which}/{name}: element(s) not in the known schema "
+                          f"order list: {unknown} — extend the list in build.yml")
+                  for (a, ta), (b, tb) in zip(ranks, ranks[1:]):
+                      if a > b:
+                          failures.append(
+                              f"{which}/{name}: <{ta}> must come after <{tb}>; "
+                              f"Setup will reject this answer file")
+
+          for line in failures:
+              print(f"::error::{line}")
+          if failures:
+              sys.exit(1)
+          print("answer file element order is valid for every checked component")
+          PY
+
           # The payload config is what Provision.ps1 parses.
           "$BIN" --emit-payload-config > /tmp/config.json
           python3 -c "import json,sys; json.load(open('/tmp/config.json'))"

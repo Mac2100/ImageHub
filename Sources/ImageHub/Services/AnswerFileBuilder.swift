@@ -78,10 +78,15 @@ struct AnswerFileBuilder {
             setupBody += diskConfiguration()
         }
         setupBody += imageInstall()
-        setupBody += userData()
+        // Element order inside a component is part of the unattend schema, and
+        // Setup rejects the whole answer file when it's wrong rather than
+        // ignoring the stray element. The sequence here is DiskConfiguration,
+        // ImageInstall, RunSynchronous, UserData — so the bypasses go in front of
+        // UserData, not after it, where they used to be.
         if let bypass = requirementBypass() {
             setupBody += bypass
         }
+        setupBody += userData()
         body += component("Microsoft-Windows-Setup", body: setupBody)
         body += "\n</settings>"
         return body
@@ -268,26 +273,22 @@ struct AnswerFileBuilder {
     }
 
     /// Sets the LabConfig keys Windows Setup checks for TPM / Secure Boot / RAM.
+    /// LabConfig only, and only in windowsPE — this writes into WinPE's own
+    /// registry, which is exactly where Setup reads the hardware-check bypasses
+    /// from. BypassNRO is *not* set here: in windowsPE, HKLM is WinPE's hive, so
+    /// the value would vanish with the RAM disk. It's applied in specialize
+    /// instead, where HKLM is the installed system.
     private func requirementBypass() -> String? {
-        guard template.system.bypassWin11Requirements || template.system.bypassNetworkRequirement else {
-            return nil
-        }
-        var commands: [String] = []
-        if template.system.bypassWin11Requirements {
-            let labConfig = [
-                "BypassTPMCheck", "BypassSecureBootCheck", "BypassRAMCheck",
-                "BypassCPUCheck", "BypassStorageCheck"
-            ]
-            commands += labConfig.map {
-                #"reg add HKLM\SYSTEM\Setup\LabConfig /v \#($0) /t REG_DWORD /d 1 /f"#
+        guard template.system.bypassWin11Requirements else { return nil }
+        let labConfig = [
+            "BypassTPMCheck", "BypassSecureBootCheck", "BypassRAMCheck",
+            "BypassCPUCheck", "BypassStorageCheck"
+        ]
+        return runSynchronous(
+            labConfig.map {
+                #"cmd /c reg add HKLM\SYSTEM\Setup\LabConfig /v \#($0) /t REG_DWORD /d 1 /f"#
             }
-        }
-        if template.system.bypassNetworkRequirement {
-            commands.append(
-                #"reg add HKLM\SYSTEM\Setup\OOBE /v BypassNRO /t REG_DWORD /d 1 /f"#
-            )
-        }
-        return runSynchronous(commands.map { "cmd /c \($0)" })
+        )
     }
 
     // MARK: - specialize
@@ -308,6 +309,13 @@ struct AnswerFileBuilder {
         // Stage the payload onto the system drive first so provisioning keeps
         // working after the USB stick is pulled out.
         var commands: [String] = [stagePayloadCommand]
+        if template.system.bypassNetworkRequirement {
+            // Has to be here rather than windowsPE: OOBE reads it from the
+            // installed system's registry, and in windowsPE HKLM is the RAM disk.
+            commands.append(
+                #"cmd /c reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f"#
+            )
+        }
         if template.system.enableRemoteDesktop {
             commands.append(
                 #"cmd /c reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f"#
