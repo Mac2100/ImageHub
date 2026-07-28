@@ -13,11 +13,17 @@
 # separate process, so this is aggregation rather than linking — but the licence
 # text and source version ship alongside it, which is what the licence requires.
 #
-# Usage: scripts/build_wimlib.sh <output-directory>
+# Usage: scripts/build_wimlib.sh <output-directory> [target-arch]
+#
+# With no target-arch it builds for the host. Passing a different one
+# cross-compiles — that keeps everything on a single runner, because Intel macOS
+# runners now sit queued indefinitely and a job that never starts blocks the app
+# build behind it.
 set -euo pipefail
 
 WIMLIB_VERSION="1.14.5"
-OUTPUT="${1:?usage: build_wimlib.sh <output-directory>}"
+OUTPUT="${1:?usage: build_wimlib.sh <output-directory> [target-arch]}"
+TARGET_ARCH="${2:-$(uname -m)}"
 mkdir -p "${OUTPUT}"
 OUTPUT="$(cd "${OUTPUT}" && pwd)"
 
@@ -25,8 +31,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 cd "${WORK}"
 
-ARCH="$(uname -m)"
-echo "Building wimlib ${WIMLIB_VERSION} for ${ARCH}"
+HOST_ARCH="$(uname -m)"
+echo "Building wimlib ${WIMLIB_VERSION} for ${TARGET_ARCH} (host ${HOST_ARCH})"
 
 # The release tarball on wimlib.net ships a generated ./configure; the GitHub tag
 # archive does not, so autotools runs when needed.
@@ -48,12 +54,21 @@ fi
 # libxml2 comes from the SDK rather than Homebrew, so the binary stays portable.
 SDK="$(xcrun --show-sdk-path)"
 
+CONFIGURE_ARGS=(
+  --disable-shared
+  --enable-static
+  --without-fuse
+  --without-ntfs-3g
+  --without-libcrypto
+)
+if [ "${TARGET_ARCH}" != "${HOST_ARCH}" ]; then
+  # Autoconf switches to cross mode and stops trying to run test binaries.
+  CONFIGURE_ARGS+=(--host="${TARGET_ARCH}-apple-darwin")
+fi
+
 ./configure \
-  --disable-shared \
-  --enable-static \
-  --without-fuse \
-  --without-ntfs-3g \
-  --without-libcrypto \
+  "${CONFIGURE_ARGS[@]}" \
+  CC="clang -arch ${TARGET_ARCH}" \
   CPPFLAGS="-I${SDK}/usr/include/libxml2" \
   LIBS="-lxml2" \
   >configure.log 2>&1 || { tail -40 configure.log; exit 1; }
@@ -81,10 +96,19 @@ if otool -L "${BINARY}" | tail -n +2 | grep -Eq '/opt/homebrew|/usr/local|/opt/l
   exit 1
 fi
 
-"${BINARY}" --version
+# Confirm the binary really is the architecture that was asked for.
+if ! lipo -archs "${BINARY}" | tr ' ' '\n' | grep -qx "${TARGET_ARCH}"; then
+  echo "error: expected ${TARGET_ARCH} but got $(lipo -archs "${BINARY}")" >&2
+  exit 1
+fi
 
-cp "${BINARY}" "${OUTPUT}/wimlib-imagex-${ARCH}"
+# Only runnable when it matches the host.
+if [ "${TARGET_ARCH}" = "${HOST_ARCH}" ]; then
+  "${BINARY}" --version
+fi
+
+cp "${BINARY}" "${OUTPUT}/wimlib-imagex-${TARGET_ARCH}"
 cp COPYING "${OUTPUT}/COPYING" 2>/dev/null || true
 echo "${WIMLIB_VERSION}" > "${OUTPUT}/VERSION"
 
-echo "Wrote ${OUTPUT}/wimlib-imagex-${ARCH}"
+echo "Wrote ${OUTPUT}/wimlib-imagex-${TARGET_ARCH}"

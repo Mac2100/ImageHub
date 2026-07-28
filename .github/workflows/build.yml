@@ -18,24 +18,17 @@ permissions:
 
 jobs:
   # wimlib-imagex is bundled so splitting an oversized install.wim needs no
-  # Homebrew on the Mac that builds drives. Built natively per architecture and
-  # lipo'd below — cross-compiling autotools projects on macOS is far more
-  # fragile than using one runner per arch.
+  # Homebrew on the Mac that builds drives.
+  #
+  # One job on one runner, deliberately. The obvious shape — a matrix with an
+  # Intel runner for x86_64 — does not work any more: macos-13 sits queued
+  # indefinitely, `timeout-minutes` only starts counting once a job gets a
+  # runner, and the app build waits behind it. So arm64 is built natively and
+  # x86_64 is cross-compiled here, with cross-compilation allowed to fail.
   wimlib:
-    name: Build wimlib (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: macos-14
-            arch: arm64
-          - runner: macos-13
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
-    # Intel runners are being phased out and can sit queued for a long time. The
-    # app build waits on this job, so cap it: a timeout fails this arch, the
-    # release still goes out, and Intel Macs fall back to Homebrew.
-    timeout-minutes: 20
+    name: Build wimlib
+    runs-on: macos-14
+    timeout-minutes: 25
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -43,13 +36,22 @@ jobs:
       - name: Install autotools
         run: brew install autoconf automake libtool pkg-config
 
-      - name: Build
-        run: ./scripts/build_wimlib.sh "$RUNNER_TEMP/wimlib"
+      - name: Build for arm64
+        run: ./scripts/build_wimlib.sh "$RUNNER_TEMP/wimlib" arm64
+
+      - name: Build for x86_64
+        id: intel
+        continue-on-error: true
+        run: ./scripts/build_wimlib.sh "$RUNNER_TEMP/wimlib" x86_64
+
+      - name: Note a missing Intel slice
+        if: steps.intel.outcome != 'success'
+        run: echo "::warning::x86_64 cross-compile failed; Intel Macs will fall back to Homebrew."
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: wimlib-${{ matrix.arch }}
+          name: wimlib
           path: ${{ runner.temp }}/wimlib/
           if-no-files-found: error
 
@@ -64,34 +66,27 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
-      - name: Download wimlib (arm64)
+      - name: Download wimlib
         uses: actions/download-artifact@v4
         continue-on-error: true
         with:
-          name: wimlib-arm64
-          path: wimlib-arm64
+          name: wimlib
+          path: wimlib
 
-      - name: Download wimlib (x86_64)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: wimlib-x86_64
-          path: wimlib-x86_64
-
-      - name: Stage a universal wimlib
+      - name: Stage wimlib into the bundle
         run: |
           set -euo pipefail
-          arm="wimlib-arm64/wimlib-imagex-arm64"
-          intel="wimlib-x86_64/wimlib-imagex-x86_64"
+          arm="wimlib/wimlib-imagex-arm64"
+          intel="wimlib/wimlib-imagex-x86_64"
           mkdir -p vendor/bin vendor/wimlib
 
           if [ -f "$arm" ] && [ -f "$intel" ]; then
             lipo -create "$arm" "$intel" -output vendor/bin/wimlib-imagex
           elif [ -f "$arm" ]; then
-            echo "::warning::Only the arm64 wimlib built; Intel Macs will fall back to Homebrew."
+            echo "::warning::arm64 wimlib only; Intel Macs will fall back to Homebrew."
             cp "$arm" vendor/bin/wimlib-imagex
           elif [ -f "$intel" ]; then
-            echo "::warning::Only the x86_64 wimlib built; Apple Silicon will fall back to Homebrew."
+            echo "::warning::x86_64 wimlib only; Apple Silicon will fall back to Homebrew."
             cp "$intel" vendor/bin/wimlib-imagex
           else
             echo "::warning::No wimlib binary available; the app will look for Homebrew's copy."
@@ -100,10 +95,8 @@ jobs:
 
           chmod +x vendor/bin/wimlib-imagex
           lipo -info vendor/bin/wimlib-imagex
-          cp wimlib-arm64/COPYING vendor/wimlib/COPYING 2>/dev/null \
-            || cp wimlib-x86_64/COPYING vendor/wimlib/COPYING 2>/dev/null || true
-          cp wimlib-arm64/VERSION vendor/wimlib/VERSION 2>/dev/null \
-            || cp wimlib-x86_64/VERSION vendor/wimlib/VERSION 2>/dev/null || true
+          cp wimlib/COPYING vendor/wimlib/COPYING 2>/dev/null || true
+          cp wimlib/VERSION vendor/wimlib/VERSION 2>/dev/null || true
 
       - name: Show toolchain
         run: |
