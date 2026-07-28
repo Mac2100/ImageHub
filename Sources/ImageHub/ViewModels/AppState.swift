@@ -72,7 +72,11 @@ final class AppState: ObservableObject {
             updates.objectWillChange.eraseToAnyPublisher()
         ] {
             publisher
-                .sink { [weak self] _ in self?.objectWillChange.send() }
+                .sink { [weak self] _ in
+                    // These publishers are owned by @MainActor stores, so this
+                    // always runs on the main thread.
+                    MainActor.assumeIsolated { self?.objectWillChange.send() }
+                }
                 .store(in: &cancellables)
         }
 
@@ -88,10 +92,12 @@ final class AppState: ObservableObject {
         driveTimer = Timer.publish(every: 4, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self, !self.isScanningDrives else { return }
-                // Don't re-enumerate disks while a build is mid-write.
-                guard self.activeJob?.isRunning != true else { return }
-                Task { await self.refreshDrives() }
+                MainActor.assumeIsolated {
+                    guard let self, !self.isScanningDrives else { return }
+                    // Don't re-enumerate disks while a build is mid-write.
+                    guard self.activeJob?.isRunning != true else { return }
+                    Task { await self.refreshDrives() }
+                }
             }
     }
 

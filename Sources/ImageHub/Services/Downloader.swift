@@ -120,7 +120,9 @@ final class Downloader: ObservableObject {
     // MARK: - Checksums
 
     /// Streams the file through SHA-256 so a 6 GB ISO doesn't land in memory.
-    static func sha256(of url: URL, progress: (@Sendable (Double) -> Void)? = nil) throws -> String {
+    /// `nonisolated` because it does pure file I/O and is called from a detached
+    /// task — hashing a 6 GB ISO must not run on the main actor.
+    nonisolated static func sha256(of url: URL, progress: (@Sendable (Double) -> Void)? = nil) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
 

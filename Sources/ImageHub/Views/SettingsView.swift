@@ -269,7 +269,7 @@ struct ToolsSettingsView: View {
     private func installViaBrew() {
         installing = true
         installLog = []
-        Task {
+        Task { @MainActor in
             do {
                 try await WimTools.installViaHomebrew { line in
                     Task { @MainActor in installLog.append(line) }

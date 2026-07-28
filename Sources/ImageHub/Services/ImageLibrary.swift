@@ -21,7 +21,9 @@ final class ImageLibrary: ObservableObject {
         // `downloader` is a nested ObservableObject, so its changes have to be
         // republished by hand or views watching the library never redraw.
         downloader.objectWillChange
-            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .sink { [weak self] _ in
+                MainActor.assumeIsolated { self?.objectWillChange.send() }
+            }
             .store(in: &cancellables)
     }
 
@@ -324,9 +326,12 @@ final class ImageLibrary: ObservableObject {
 
     private func computeHash(_ url: URL) async -> String {
         hashProgress = 0
-        let result = await Task.detached(priority: .userInitiated) { [weak self] in
+        // Captured once as a constant: a @MainActor class is Sendable, and this
+        // avoids re-capturing `self` inside the nested progress closure.
+        let library = self
+        let result = await Task.detached(priority: .userInitiated) {
             (try? Downloader.sha256(of: url) { fraction in
-                Task { @MainActor [weak self] in self?.hashProgress = fraction }
+                Task { @MainActor in library.hashProgress = fraction }
             }) ?? ""
         }.value
         hashProgress = nil

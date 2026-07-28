@@ -135,10 +135,7 @@ struct TemplateEditorView: View {
 
     private var tabBar: some View {
         HStack {
-            CapsuleSegments(
-                options: Tab.allCases.map { ($0, $0.label, $0.symbol) },
-                selection: $tab
-            )
+            CapsuleSegments(options: Self.segments, selection: $tab)
             Spacer()
             if !draft.isBuildable {
                 Chip(
@@ -229,14 +226,10 @@ struct TemplateEditorView: View {
 
                 LabeledContent("Image index") {
                     HStack(spacing: 6) {
-                        TextField(
-                            "Auto",
-                            value: Binding(
-                                get: { draft.windows.imageIndex },
-                                set: { draft.windows.imageIndex = $0 }
-                            ),
-                            format: .number
-                        )
+                        TextField("Auto", text: Binding(
+                            get: { draft.windows.imageIndex.map(String.init) ?? "" },
+                            set: { draft.windows.imageIndex = Int($0) }
+                        ))
                         .frame(width: 70)
                         Text("Leave empty to match by edition name")
                             .font(.caption)
@@ -686,6 +679,11 @@ struct TemplateEditorView: View {
             lastSaved = Date()
         }
     }
+
+    /// Explicitly typed: `CapsuleSegments` takes labelled tuples with an
+    /// optional symbol, and a bare `.map` wouldn't convert to that.
+    static let segments: [(value: Tab, label: String, symbol: String?)] =
+        Tab.allCases.map { (value: $0, label: $0.label, symbol: Optional($0.symbol)) }
 
     static let symbolChoices = [
         "desktopcomputer", "laptopcomputer", "display", "pc",
