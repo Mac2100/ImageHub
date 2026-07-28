@@ -1,5 +1,20 @@
 import Foundation
 
+/// Thread-safe cancellation flag shared with background copy work.
+///
+/// Reading `@MainActor` state from a detached task is what crashed 1.0.3:
+/// `MainActor.assumeIsolated` traps when the caller genuinely isn't on the main
+/// actor, and the file copier's `isCancelled` callback runs on a cooperative
+/// background thread. A plain locked box has no isolation to assume.
+final class CancelToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    var isCancelled: Bool { lock.sync { flag } }
+
+    func cancel() { lock.sync { flag = true } }
+}
+
 /// Live state for one "make me a golden-image USB" run.
 @MainActor
 final class BuildJob: ObservableObject, Identifiable {
@@ -68,6 +83,9 @@ final class BuildJob: ObservableObject, Identifiable {
     let id = UUID()
     let templateName: String
     let driveName: String
+
+    /// Safe to read from background work; mirrors `cancelRequested`.
+    nonisolated let cancelToken = CancelToken()
 
     @Published var phase: Phase = .idle
     @Published var stages: [Stage: StageState] = [:]
@@ -148,6 +166,7 @@ final class BuildJob: ObservableObject, Identifiable {
 
     func cancel() {
         cancelRequested = true
+        cancelToken.cancel()
         append("Cancelling…", isError: true)
     }
 

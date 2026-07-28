@@ -51,6 +51,8 @@ final class SelfUpdater: ObservableObject {
                 relaunch(target: target)
             } catch {
                 phase = .failed(error.localizedDescription)
+                // The progress panel shows the message and its own Close button,
+                // so it stays up rather than being dismissed here.
                 ToastCenter.shared.show(
                     "Update failed", detail: error.localizedDescription, style: .error
                 )

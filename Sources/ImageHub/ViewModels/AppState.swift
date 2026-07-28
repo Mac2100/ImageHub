@@ -72,10 +72,12 @@ final class AppState: ObservableObject {
             updates.objectWillChange.eraseToAnyPublisher()
         ] {
             publisher
+                .receive(on: RunLoop.main)
                 .sink { [weak self] _ in
-                    // These publishers are owned by @MainActor stores, so this
-                    // always runs on the main thread.
-                    MainActor.assumeIsolated { self?.objectWillChange.send() }
+                    // Not `MainActor.assumeIsolated`: that traps if the guess is
+                    // ever wrong, and a wrong guess elsewhere is what crashed
+                    // 1.0.3. Hopping is cheap and cannot fail.
+                    Task { @MainActor in self?.objectWillChange.send() }
                 }
                 .store(in: &cancellables)
         }
@@ -92,11 +94,11 @@ final class AppState: ObservableObject {
         driveTimer = Timer.publish(every: 4, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                MainActor.assumeIsolated {
+                Task { @MainActor in
                     guard let self, !self.isScanningDrives else { return }
                     // Don't re-enumerate disks while a build is mid-write.
                     guard self.activeJob?.isRunning != true else { return }
-                    Task { await self.refreshDrives() }
+                    await self.refreshDrives()
                 }
             }
     }

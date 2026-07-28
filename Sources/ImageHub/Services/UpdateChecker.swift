@@ -87,6 +87,9 @@ final class UpdateChecker: ObservableObject {
         NSApp.activate(ignoringOtherApps: true)
         switch alert.runModal() {
         case .alertFirstButtonReturn:
+            // Shown before starting: the download is the long part and the menu
+            // path has no other progress indicator.
+            UpdateProgressWindow.shared.show(version: version)
             SelfUpdater.shared.install(from: url)
         case .alertThirdButtonReturn:
             NSWorkspace.shared.open(Self.releasesPage)

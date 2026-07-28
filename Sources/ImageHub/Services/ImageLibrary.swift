@@ -22,8 +22,9 @@ final class ImageLibrary: ObservableObject {
         // `downloader` is a nested ObservableObject, so its changes have to be
         // republished by hand or views watching the library never redraw.
         downloader.objectWillChange
+            .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                MainActor.assumeIsolated { self?.objectWillChange.send() }
+                Task { @MainActor in self?.objectWillChange.send() }
             }
             .store(in: &cancellables)
     }

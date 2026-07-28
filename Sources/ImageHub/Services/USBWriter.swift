@@ -175,6 +175,7 @@ enum USBWriter {
 
         log("Copying \(plan.fileCount) files (\(plan.totalBytes.byteSize))…")
 
+        let token = job.cancelToken
         try await Task.detached(priority: .userInitiated) {
             try FileCopier.copy(
                 plan: plan,
@@ -185,7 +186,7 @@ enum USBWriter {
                         job.detail = "Copying Windows Setup files — \(Int(fraction * 100))%"
                     }
                 },
-                isCancelled: { MainActor.assumeIsolated { job.cancelRequested } }
+                isCancelled: { token.isCancelled }
             )
         }.value
 
@@ -260,6 +261,7 @@ enum USBWriter {
         log: @escaping @Sendable (String) -> Void
     ) async throws {
         let name = source.lastPathComponent
+        let token = job.cancelToken
         try await Task.detached(priority: .userInitiated) {
             try FileCopier.copyFile(
                 from: source,
@@ -270,7 +272,7 @@ enum USBWriter {
                         job.detail = "Writing \(name) — \(Int(fraction * 100))%"
                     }
                 },
-                isCancelled: { MainActor.assumeIsolated { job.cancelRequested } }
+                isCancelled: { token.isCancelled }
             )
         }.value
         job.stageProgress = 1
