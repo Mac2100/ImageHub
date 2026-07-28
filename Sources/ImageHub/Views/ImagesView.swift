@@ -289,7 +289,6 @@ struct ImagesView: View {
             )
             return
         }
-        template.windows.imageSource = .libraryImage
         template.windows.libraryImageID = image.id
         appState.templates.save(template)
         appState.selectedTemplateID = template.id

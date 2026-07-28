@@ -56,8 +56,7 @@ final class ImageLibrary: ObservableObject {
 
     /// Newest usable image matching a template's release/edition wishes.
     func bestMatch(for template: DeploymentTemplate) -> WindowsImage? {
-        if template.windows.imageSource == .libraryImage,
-           let pinned = image(id: template.windows.libraryImageID), pinned.fileExists {
+        if let pinned = image(id: template.windows.libraryImageID), pinned.fileExists {
             return pinned
         }
         return images

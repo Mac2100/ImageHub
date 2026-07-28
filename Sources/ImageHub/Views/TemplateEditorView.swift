@@ -192,48 +192,64 @@ struct TemplateEditorView: View {
             }
 
             Section {
-                Picker("Image source", selection: $draft.windows.imageSource) {
-                    ForEach(ImageSourceKind.allCases) { kind in
-                        Text(kind.label).tag(kind)
-                    }
+                // Default state is one read-only row and nothing to decide.
+                // Which ISO to use is a per-build choice the build sheet already
+                // makes; duplicating it here as an "Image source" picker was the
+                // confusing part.
+                LabeledContent("Windows image") {
+                    Text(imageSummary)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                 }
-                SectionCaption(text: draft.windows.imageSource.help)
 
-                switch draft.windows.imageSource {
-                case .latestFromMicrosoft:
-                    EmptyView()
-                case .libraryImage:
-                    Picker("Image", selection: Binding(
-                        get: { draft.windows.libraryImageID },
-                        set: { draft.windows.libraryImageID = $0 }
-                    )) {
-                        Text("Newest matching image").tag(UUID?.none)
-                        ForEach(appState.library.images) { image in
-                            Text(image.displayName).tag(Optional(image.id))
+                DisclosureGroup("Advanced") {
+                    Toggle("Always build from one specific image", isOn: Binding(
+                        get: { draft.windows.pinsLibraryImage },
+                        set: { pin in
+                            draft.windows.libraryImageID = pin
+                                ? appState.library.images.first(where: { $0.fileExists })?.id
+                                : nil
                         }
+                    ))
+                    if draft.windows.pinsLibraryImage {
+                        Picker("Image", selection: Binding(
+                            get: { draft.windows.libraryImageID },
+                            set: { draft.windows.libraryImageID = $0 }
+                        )) {
+                            ForEach(appState.library.images) { image in
+                                Text(image.displayName).tag(Optional(image.id))
+                            }
+                        }
+                        SectionCaption(
+                            text: "Every build of this template uses that exact ISO, so the result is byte-for-byte repeatable."
+                        )
                     }
-                case .customWim:
+
+                    Divider()
+
                     PathField(
-                        label: "Captured image",
+                        label: "Install a captured image",
                         path: $draft.windows.customWimPath,
-                        prompt: "Choose an install.wim or .esd",
+                        prompt: "Use the one in the ISO",
                         types: [.wim, .data]
                     )
                     SectionCaption(
-                        text: "ImageHub still boots Microsoft's Setup from the ISO; only the install image is replaced. Sysprep the reference machine with /generalize /oobe before capturing."
+                        text: "The true golden-image route. Setup and the boot files still come from the ISO; only the installed OS comes from your image. Sysprep the reference machine with /generalize /oobe before capturing."
                     )
-                }
 
-                LabeledContent("Image index") {
-                    HStack(spacing: 6) {
-                        TextField("Auto", text: Binding(
-                            get: { draft.windows.imageIndex.map(String.init) ?? "" },
-                            set: { draft.windows.imageIndex = Int($0) }
-                        ))
-                        .frame(width: 70)
-                        Text("Leave empty to match by edition name")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    if draft.windows.usesCapturedImage {
+                        LabeledContent("Image index") {
+                            HStack(spacing: 6) {
+                                TextField("Auto", text: Binding(
+                                    get: { draft.windows.imageIndex.map(String.init) ?? "" },
+                                    set: { draft.windows.imageIndex = Int($0) }
+                                ))
+                                .frame(width: 70)
+                                Text("Only needed if your image uses custom edition names")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
             } header: {
@@ -598,7 +614,7 @@ struct TemplateEditorView: View {
                 .font(.headline)
 
             summaryRow("Installs", "\(draft.windows.release.label) \(draft.windows.edition.label) (\(draft.windows.architecture))")
-            summaryRow("Image from", draft.windows.imageSource.label)
+            summaryRow("Image from", imageSummary)
             summaryRow(
                 "Target disk",
                 draft.disk.wipeTargetDisk
@@ -632,6 +648,24 @@ struct TemplateEditorView: View {
             }
         }
         .glassCard()
+    }
+
+    /// One line describing where the image comes from, for the header row and
+    /// the Review tab.
+    private var imageSummary: String {
+        var parts: [String] = []
+        if let id = draft.windows.libraryImageID,
+           let pinned = appState.library.image(id: id) {
+            parts.append(pinned.displayName)
+        } else if draft.windows.pinsLibraryImage {
+            parts.append("A pinned image that is no longer in the library")
+        } else {
+            parts.append("Chosen when you build")
+        }
+        if draft.windows.usesCapturedImage {
+            parts.append("installing \((draft.windows.customWimPath as NSString).lastPathComponent)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var identitySummary: String {

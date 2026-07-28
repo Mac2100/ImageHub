@@ -183,7 +183,7 @@ struct BuildSheet: View {
                             }
 
                             if let template = selectedTemplate,
-                               template.windows.imageSource == .customWim {
+                               template.windows.usesCapturedImage {
                                 NoticeBanner(
                                     kind: .info,
                                     title: "Template overrides the install image",

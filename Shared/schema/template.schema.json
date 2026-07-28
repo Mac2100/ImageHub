@@ -27,19 +27,19 @@
         },
         "language": { "type": "string", "default": "en-US" },
         "architecture": { "enum": ["x64", "arm64"], "default": "x64" },
-        "imageSource": {
-          "enum": ["latestFromMicrosoft", "libraryImage", "customWim"],
-          "default": "latestFromMicrosoft"
+        "libraryImageID": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Pins the template to one ISO in the library. Omit to choose the image at build time."
         },
-        "libraryImageID": { "type": "string", "format": "uuid" },
         "customWimPath": {
           "type": "string",
           "default": "",
-          "description": "A sysprepped install.wim/.esd used instead of the one inside the ISO."
+          "description": "A sysprepped install.wim/.esd installed instead of the one inside the ISO. Independent of libraryImageID — the ISO always supplies Setup and the boot files."
         },
         "imageIndex": {
           "type": "integer",
-          "description": "Overrides edition-name matching inside install.wim."
+          "description": "Overrides edition-name matching inside the install image."
         },
         "productKeyMode": { "enum": ["none", "generic", "custom"], "default": "generic" },
         "acceptEULA": { "type": "boolean", "default": true }

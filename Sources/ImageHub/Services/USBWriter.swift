@@ -208,7 +208,7 @@ enum USBWriter {
 
         // A template can override the install image with its own captured WIM.
         let source: URL
-        if template.windows.imageSource == .customWim && !template.windows.customWimPath.isEmpty {
+        if template.windows.usesCapturedImage {
             source = URL(fileURLWithPath: template.windows.customWimPath)
             guard fm.fileExists(atPath: source.path) else {
                 throw WriteError(

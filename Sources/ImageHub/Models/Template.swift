@@ -74,52 +74,26 @@ enum WindowsEdition: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// Where the install media comes from for a given template.
-enum ImageSourceKind: String, Codable, CaseIterable, Identifiable, Hashable {
-    /// Fetch the newest matching ISO from Microsoft at build time.
-    case latestFromMicrosoft
-    /// Use a specific ISO already in the local image library.
-    case libraryImage
-    /// Use a captured/customised `install.wim` (or `.esd`) instead of the one in
-    /// the ISO — the "true golden image" path, for teams that sysprep and
-    /// capture a reference machine.
-    case customWim
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .latestFromMicrosoft: return "Ask me when building"
-        case .libraryImage: return "Always this image"
-        case .customWim: return "Install a captured image"
-        }
-    }
-
-    var help: String {
-        switch self {
-        case .latestFromMicrosoft:
-            return "The build sheet asks which image from your library to use. This is the right choice unless you have a reason to pin one."
-        case .libraryImage:
-            return "Pins one specific ISO, so this template always builds from identical bytes no matter what else is in the library."
-        case .customWim:
-            return "You still pick an ISO at build time — Setup and the boot files come from it — but the operating system is installed from your own captured image instead of Microsoft's."
-        }
-    }
-}
-
 struct WindowsSpec: Codable, Equatable, Hashable {
     var release: WindowsRelease = .win11
     var edition: WindowsEdition = .pro
     var language: String = "en-US"
     var architecture: String = "x64"
 
-    var imageSource: ImageSourceKind = .latestFromMicrosoft
-    /// Set when `imageSource == .libraryImage`.
+    /// Pins the template to one ISO in the library. Nil means "ask at build
+    /// time", which is what the build sheet already does.
     var libraryImageID: UUID?
-    /// Set when `imageSource == .customWim`.
+    /// A sysprepped image installed instead of the one inside the ISO. Empty
+    /// means use Microsoft's. Independent of `libraryImageID`: the ISO always
+    /// supplies Setup and the boot files either way.
     var customWimPath: String = ""
-    /// Overrides edition-name matching when a custom WIM has non-standard names.
+    /// Overrides edition-name matching when a captured image uses custom names.
     var imageIndex: Int?
+
+    /// True when the OS comes from a captured image rather than the ISO's.
+    var usesCapturedImage: Bool { !customWimPath.isEmpty }
+    /// True when this template always builds from one specific ISO.
+    var pinsLibraryImage: Bool { libraryImageID != nil }
 
     var productKeyMode: ProductKeyMode = .generic
     var acceptEULA: Bool = true
@@ -145,7 +119,6 @@ struct WindowsSpec: Codable, Equatable, Hashable {
         edition = c.v(.edition, WindowsEdition.pro)
         language = c.v(.language, "en-US")
         architecture = c.v(.architecture, "x64")
-        imageSource = c.v(.imageSource, ImageSourceKind.latestFromMicrosoft)
         libraryImageID = c.opt(.libraryImageID)
         customWimPath = c.v(.customWimPath, "")
         imageIndex = c.opt(.imageIndex)
@@ -758,8 +731,9 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
                 errors.append("Admin account has no password set (Accounts tab).")
             }
         }
-        if windows.imageSource == .customWim && windows.customWimPath.isEmpty {
-            errors.append("Image source is a captured WIM but no path is set.")
+        if windows.usesCapturedImage,
+           !FileManager.default.fileExists(atPath: windows.customWimPath) {
+            errors.append("The captured image this template points at is missing.")
         }
         if windows.productKeyMode == .custom && !SecretStore.has(id, slot: .productKey) {
             errors.append("Product key mode is “Specific key” but no key is stored.")
@@ -804,8 +778,8 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         if admin.autoLogonCount > 1 {
             warnings.append("Admin auto-logon runs \(admin.autoLogonCount) times — the machine signs in unattended until that count is used up.")
         }
-        if windows.imageSource == .latestFromMicrosoft && windows.edition == .enterprise {
-            warnings.append("Enterprise is not offered on Microsoft's public download; import a volume-licence ISO instead.")
+        if windows.edition == .enterprise {
+            warnings.append("Enterprise isn't offered on Microsoft's public download — the image you build from has to be volume-licence media.")
         }
         return warnings
     }
