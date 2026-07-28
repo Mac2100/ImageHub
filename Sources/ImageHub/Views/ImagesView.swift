@@ -9,6 +9,7 @@ struct ImagesView: View {
     @State private var pendingDeletion: WindowsImage?
     @State private var expandedID: UUID?
     @State private var downloadLog: [String] = []
+    @State private var lastDownloadFailed = false
 
     private var library: ImageLibrary { appState.library }
 
@@ -31,6 +32,7 @@ struct ImagesView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             Button("Import ISO…") { importISO() }
+                            Button("Open Microsoft's Page…") { openMicrosoftPage(.win11) }
                         }
                     }
                     .frame(minHeight: 320)
@@ -54,6 +56,29 @@ struct ImagesView: View {
                         }
                     }
                     .glassCard(padding: 0)
+                }
+
+                if lastDownloadFailed {
+                    VStack(alignment: .leading, spacing: 10) {
+                        NoticeBanner(
+                            kind: .warning,
+                            title: "Microsoft wouldn't hand over a download link",
+                            messages: [
+                                "Their download service refuses automated requests fairly often — it's an anti-abuse check, not something ImageHub can talk its way past.",
+                                "Downloading the ISO in a browser takes about the same time and always works. Grab it, then use Import ISO to add it to the library."
+                            ]
+                        )
+                        HStack(spacing: 8) {
+                            Button {
+                                openMicrosoftPage(.win11)
+                            } label: {
+                                Label("Open Microsoft's Download Page", systemImage: "safari")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("Import ISO…") { importISO() }
+                            Spacer()
+                        }
+                    }
                 }
 
                 if !downloadLog.isEmpty {
@@ -83,6 +108,8 @@ struct ImagesView: View {
                     Menu {
                         Button("Latest Windows 11") { download(.win11) }
                         Button("Latest Windows 10") { download(.win10) }
+                        Divider()
+                        Button("Open Microsoft's Download Page…") { openMicrosoftPage(.win11) }
                     } label: {
                         Label("Download", systemImage: "arrow.down.circle")
                     }
@@ -186,6 +213,8 @@ struct ImagesView: View {
                         Text(entry.element)
                             .font(.system(size: 11).monospaced())
                             .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -201,16 +230,22 @@ struct ImagesView: View {
 
     private func download(_ release: WindowsRelease) {
         downloadLog = []
+        lastDownloadFailed = false
         let language = UserDefaults.standard.string(forKey: "defaultLanguage") ?? "en-US"
-        Task {
-            await library.downloadLatest(
+        Task { @MainActor in
+            let image = await library.downloadLatest(
                 release: release,
                 language: language,
                 log: { line in
                     Task { @MainActor in downloadLog.append(line) }
                 }
             )
+            lastDownloadFailed = (image == nil)
         }
+    }
+
+    private func openMicrosoftPage(_ release: WindowsRelease) {
+        NSWorkspace.shared.open(MicrosoftISOService.pageURL(for: release))
     }
 
     private func importISO() {

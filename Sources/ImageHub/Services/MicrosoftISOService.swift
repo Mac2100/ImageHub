@@ -29,7 +29,7 @@ enum MicrosoftISOService {
         }
     }
 
-    private static func pageURL(for release: WindowsRelease) -> URL {
+    static func pageURL(for release: WindowsRelease) -> URL {
         switch release {
         case .win11:
             return URL(string: "https://www.microsoft.com/en-us/software-download/windows11")!
@@ -44,11 +44,6 @@ enum MicrosoftISOService {
         language: String,
         log: (@Sendable (String) -> Void)? = nil
     ) async throws -> AvailableDownload {
-        let session = UUID().uuidString.lowercased()
-
-        log?("Registering a download session with Microsoft…")
-        try await registerSession(session)
-
         log?("Looking up the current \(release.label) product edition…")
         let editionIDs = try await editionIDs(for: release)
         guard !editionIDs.isEmpty else {
@@ -60,8 +55,16 @@ enum MicrosoftISOService {
         var lastError: Error?
         for editionID in editionIDs {
             do {
+                // A rejected request burns the session, so each edition attempt
+                // gets a freshly registered one — reusing it guarantees that
+                // every attempt after the first is refused.
+                let session = UUID().uuidString.lowercased()
+                log?("Registering a download session with Microsoft…")
+                try await registerSession(session, release: release, log: log)
+
                 let sku = try await findSKU(
-                    editionID: editionID, language: language, session: session, log: log
+                    editionID: editionID, language: language, session: session,
+                    release: release, log: log
                 )
                 log?("Requesting download links for “\(sku.productName)”…")
                 return try await downloadLink(
@@ -78,12 +81,27 @@ enum MicrosoftISOService {
 
     // MARK: - Steps
 
-    private static func registerSession(_ session: String) async throws {
-        // This endpoint sets the anti-abuse token the connector API checks for.
+    /// Registers the anti-abuse ("Sentinel") token the connector API checks for.
+    ///
+    /// A failure here is the most likely cause of the final request being
+    /// rejected, so it is reported rather than swallowed — previously this was
+    /// silent and the rejection looked like an IP block.
+    private static func registerSession(
+        _ session: String,
+        release: WindowsRelease,
+        log: (@Sendable (String) -> Void)?
+    ) async throws {
         let url = URL(
             string: "https://vlscppe.microsoft.com/fp/tags?org_id=y6jn8c31&session_id=\(session)"
         )!
-        _ = try? await data(from: url, referer: nil)
+        do {
+            _ = try await data(from: url, referer: pageURL(for: release).absoluteString)
+        } catch {
+            log?("Session registration didn't succeed (\(error.localizedDescription)) — the download request will probably be refused.")
+        }
+        // Microsoft's fraud service needs a moment to associate the session
+        // before the connector API will honour it.
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
     }
 
     private static func editionIDs(for release: WindowsRelease) async throws -> [String] {
@@ -117,6 +135,7 @@ enum MicrosoftISOService {
         editionID: String,
         language: String,
         session: String,
+        release: WindowsRelease,
         log: (@Sendable (String) -> Void)?
     ) async throws -> SKU {
         var components = URLComponents(
@@ -131,7 +150,9 @@ enum MicrosoftISOService {
             URLQueryItem(name: "sessionID", value: session)
         ]
 
-        let json = try await jsonObject(from: components.url!, referer: "https://www.microsoft.com/software-download/windows11")
+        let json = try await jsonObject(
+            from: components.url!, referer: pageURL(for: release).absoluteString
+        )
         try throwIfErrors(in: json)
 
         guard let skus = json["Skus"] as? [[String: Any]], !skus.isEmpty else {
@@ -175,14 +196,16 @@ enum MicrosoftISOService {
         )!
         components.queryItems = [
             URLQueryItem(name: "profile", value: profile),
-            URLQueryItem(name: "productEditionId", value: "undefined"),
+            URLQueryItem(name: "ProductEditionId", value: "undefined"),
             URLQueryItem(name: "SKU", value: sku.id),
             URLQueryItem(name: "friendlyFileName", value: "undefined"),
             URLQueryItem(name: "Locale", value: "en-US"),
             URLQueryItem(name: "sessionID", value: session)
         ]
 
-        let json = try await jsonObject(from: components.url!, referer: "https://www.microsoft.com/software-download/windows11")
+        let json = try await jsonObject(
+            from: components.url!, referer: pageURL(for: release).absoluteString
+        )
         try throwIfErrors(in: json)
 
         guard let options = json["ProductDownloadOptions"] as? [[String: Any]], !options.isEmpty else {
