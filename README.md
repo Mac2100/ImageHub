@@ -19,7 +19,8 @@ screen. No keystrokes in between.
 - **Deployment templates** — as many as you like, each a plain JSON file you can
   export, review in a pull request, and share with the team. Icon, name, and a
   one-line summary; a Review tab that shows the generated answer file and lists
-  exactly what's blocking a build.
+  exactly what's blocking a build — click a problem and it takes you to the tab
+  that owns it.
 - **Windows image library** — import an ISO (the browser round trip to Microsoft
   is the reliable route; their download service refuses automated requests),
   or pull one from an internal URL with a **pinned SHA-256** so everybody builds
@@ -56,9 +57,10 @@ screen. No keystrokes in between.
 - **Live build view** — eight stages with per-stage progress, a streaming log,
   cancel, and a saved log per build in Build History.
 - **Safety by construction** — only removable external media is ever offered as a
-  target; internal disks are filtered out and listed with the reason. The drive
-  is re-verified immediately before erasing, and the finished media is checked
-  for its boot files before the build is called done.
+  target; internal disks are filtered out before the list is built, so there is
+  nothing to pick by mistake. The drive is re-verified immediately before
+  erasing, and the finished media is checked for its boot files before the build
+  is called done.
 - **Themes** — six accent themes and a System/Light/Dark appearance override
   (Settings → Appearance).
 - **One-click updates** — optional check against GitHub Releases at launch plus
@@ -117,7 +119,7 @@ installer. To produce the bundled binary yourself:
 invokes it as a separate process rather than linking it, so ImageHub itself stays
 MIT and this is aggregation — but the DMG does contain a GPLv3 program. Its
 licence text and pinned version ship in the app bundle, `scripts/build_wimlib.sh`
-records exactly which source it was built from, and Settings → Tools links to the
+records exactly which source it was built from, and Settings → About links to the
 licence.
 
 ## How a build works

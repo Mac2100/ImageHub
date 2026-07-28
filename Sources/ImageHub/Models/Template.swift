@@ -667,6 +667,26 @@ struct CustomScript: Codable, Equatable, Hashable, Identifiable {
     }
 }
 
+// MARK: - Validation
+
+/// Which part of a template an issue belongs to, so the editor can jump there.
+/// Named for the model rather than the UI's tabs — the editor does the mapping.
+enum TemplateField: String, Hashable {
+    case windows, disk, accounts, apps, system, firstBoot, scripts
+}
+
+/// One problem with a template, and where in the editor to fix it.
+///
+/// `issues` is recomputed on every view update, so the identity has to come from
+/// the contents rather than a fresh UUID — otherwise `ForEach` treats every row
+/// as new each time and the list flickers.
+struct ValidationIssue: Identifiable, Hashable {
+    let message: String
+    let field: TemplateField
+
+    var id: String { "\(field.rawValue)|\(message)" }
+}
+
 // MARK: - Template
 
 struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
@@ -734,44 +754,50 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
     }
 
     /// Blocking problems that must be fixed before a drive can be built.
-    var validationErrors: [String] {
-        var errors: [String] = []
+    /// Each carries the part of the template it came from so the Review tab can
+    /// take you straight there.
+    var issues: [ValidationIssue] {
+        var found: [ValidationIssue] = []
+        func add(_ message: String, _ field: TemplateField) {
+            found.append(ValidationIssue(message: message, field: field))
+        }
+
         if name.trimmingCharacters(in: .whitespaces).isEmpty {
-            errors.append("Template needs a name.")
+            add("Template needs a name.", .windows)
         }
         if admin.enabled {
             if admin.username.trimmingCharacters(in: .whitespaces).isEmpty {
-                errors.append("Admin account is enabled but has no username.")
+                add("Admin account is enabled but has no username.", .accounts)
             }
             if !SecretStore.has(id, slot: .adminPassword) {
-                errors.append("Admin account has no password set (Accounts tab).")
+                add("Admin account has no password set.", .accounts)
             }
         }
         if windows.usesCapturedImage,
            !FileManager.default.fileExists(atPath: windows.customWimPath) {
-            errors.append("The captured image this template points at is missing.")
+            add("The captured image this template points at is missing.", .windows)
         }
         if windows.productKeyMode == .custom && !SecretStore.has(id, slot: .productKey) {
-            errors.append("Product key mode is “Specific key” but no key is stored.")
+            add("Product key mode is “Specific key” but no key is stored.", .windows)
         }
         if endUser.mode == .createLocalAccount {
             if endUser.username.trimmingCharacters(in: .whitespaces).isEmpty {
-                errors.append("End-user account is enabled but has no username.")
+                add("End-user account is enabled but has no username.", .accounts)
             }
             if endUser.username.lowercased() == admin.username.lowercased() {
-                errors.append("End-user account cannot reuse the admin username.")
+                add("End-user account cannot reuse the admin username.", .accounts)
             }
         }
         if identity.joinMode == .activeDirectory {
             if identity.domain.isEmpty {
-                errors.append("Domain join is selected but no domain is set.")
+                add("Domain join is selected but no domain is set.", .accounts)
             }
             if identity.domainJoinUser.isEmpty || !SecretStore.has(id, slot: .domainPassword) {
-                errors.append("Domain join needs a username and password.")
+                add("Domain join needs a username and password.", .accounts)
             }
         }
         if system.wifi.enabled && system.wifi.ssid.isEmpty {
-            errors.append("Wi-Fi provisioning is on but no SSID is set.")
+            add("Wi-Fi provisioning is on but no SSID is set.", .system)
         }
         for (label, path) in [
             ("Logo", system.logoPath),
@@ -779,34 +805,57 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
             ("Lock screen", system.lockScreenPath),
             ("Start layout", system.startLayoutPath)
         ] where !path.isEmpty && !FileManager.default.fileExists(atPath: path) {
-            errors.append("\(label) image is missing: \((path as NSString).lastPathComponent)")
+            add("\(label) image is missing: \((path as NSString).lastPathComponent)", .system)
         }
         for app in apps where app.enabled && !app.isActionable {
-            errors.append("“\(app.displayName)” is enabled but incomplete.")
+            add("“\(app.displayName)” is enabled but incomplete.", .apps)
         }
-        return errors
+        return found
     }
 
     /// Non-blocking things worth telling the operator about.
-    var validationWarnings: [String] {
-        var warnings: [String] = []
+    var warnings: [ValidationIssue] {
+        var found: [ValidationIssue] = []
+        func add(_ message: String, _ field: TemplateField) {
+            found.append(ValidationIssue(message: message, field: field))
+        }
+
         if disk.wipeAllDisks {
-            warnings.append("This template wipes every disk in the target machine, including secondary data drives.")
+            add(
+                "This template wipes every disk in the target machine, including secondary data drives.",
+                .disk
+            )
         }
         if enabledApps.contains(where: { $0.source == .winget }) && !system.wifi.enabled {
-            warnings.append("winget apps need internet on first boot — either wire the machine up or add a Wi-Fi profile.")
+            add(
+                "winget apps need internet on first boot — either wire the machine up or add a Wi-Fi profile.",
+                .apps
+            )
         }
         if system.bypassWin11Requirements {
-            warnings.append("Windows 11 hardware checks are bypassed; Microsoft does not support the resulting installs.")
+            add(
+                "Windows 11 hardware checks are bypassed; Microsoft does not support the resulting installs.",
+                .firstBoot
+            )
         }
         if admin.autoLogonCount > 1 {
-            warnings.append("Admin auto-logon runs \(admin.autoLogonCount) times — the machine signs in unattended until that count is used up.")
+            add(
+                "Admin auto-logon runs \(admin.autoLogonCount) times — the machine signs in unattended until that count is used up.",
+                .accounts
+            )
         }
         if windows.edition == .enterprise {
-            warnings.append("Enterprise isn't offered on Microsoft's public download — the image you build from has to be volume-licence media.")
+            add(
+                "Enterprise isn't offered on Microsoft's public download — the image you build from has to be volume-licence media.",
+                .windows
+            )
         }
-        return warnings
+        return found
     }
+
+    /// Plain strings, for callers that only need the text.
+    var validationErrors: [String] { issues.map { $0.message } }
+    var validationWarnings: [String] { warnings.map { $0.message } }
 
     var isBuildable: Bool { validationErrors.isEmpty }
 }

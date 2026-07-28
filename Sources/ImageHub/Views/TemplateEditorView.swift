@@ -48,6 +48,20 @@ struct TemplateEditorView: View {
         }
     }
 
+    /// Where a validation issue lives in this editor. The model deliberately
+    /// names parts of the template rather than tabs, so the mapping is here.
+    static func tab(for field: TemplateField) -> Tab {
+        switch field {
+        case .windows: return .windows
+        case .disk: return .disk
+        case .accounts: return .accounts
+        case .apps: return .apps
+        case .system: return .system
+        case .firstBoot: return .oobe
+        case .scripts: return .scripts
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -548,25 +562,29 @@ struct TemplateEditorView: View {
 
     private var reviewTab: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if draft.validationErrors.isEmpty {
+            if draft.issues.isEmpty {
                 NoticeBanner(
                     kind: .success,
                     title: "This template is ready to build",
                     messages: []
                 )
             } else {
-                NoticeBanner(
+                IssueBanner(
                     kind: .error,
-                    title: "Fix before building",
-                    messages: draft.validationErrors
+                    title: "Fix before building — click one to go there",
+                    issues: draft.issues,
+                    destination: { Self.tab(for: $0.field).label },
+                    action: { tab = Self.tab(for: $0.field) }
                 )
             }
 
-            if !draft.validationWarnings.isEmpty {
-                NoticeBanner(
+            if !draft.warnings.isEmpty {
+                IssueBanner(
                     kind: .warning,
                     title: "Worth knowing",
-                    messages: draft.validationWarnings
+                    issues: draft.warnings,
+                    destination: { Self.tab(for: $0.field).label },
+                    action: { tab = Self.tab(for: $0.field) }
                 )
             }
 

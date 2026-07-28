@@ -36,37 +36,6 @@ struct DrivesView: View {
                     .glassCard(padding: 0)
                 }
 
-                if !appState.rejectedDrives.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Not available as targets")
-                            .font(.headline)
-                        VStack(spacing: 0) {
-                            ForEach(appState.rejectedDrives) { drive in
-                                HStack(spacing: 10) {
-                                    Image(systemName: "lock.fill")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                        .frame(width: 16)
-                                    VStack(alignment: .leading, spacing: 1) {
-                                        Text("\(drive.displayName) (\(drive.id))")
-                                            .font(.callout)
-                                        Text(drive.reason)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 9)
-                                if drive.id != appState.rejectedDrives.last?.id {
-                                    Divider()
-                                }
-                            }
-                        }
-                        .glassCard(padding: 0)
-                    }
-                }
-
                 NoticeBanner(
                     kind: .warning,
                     title: "Building erases the whole drive",

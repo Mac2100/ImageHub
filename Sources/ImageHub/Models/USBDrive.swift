@@ -41,11 +41,3 @@ struct USBDrive: Identifiable, Equatable, Hashable {
         sizeBytes >= iso + 512_000_000
     }
 }
-
-/// Why a candidate drive was rejected, so the UI can explain itself instead of
-/// silently hiding hardware the operator can see plugged in.
-struct RejectedDrive: Identifiable, Equatable, Hashable {
-    var id: String
-    var displayName: String
-    var reason: String
-}

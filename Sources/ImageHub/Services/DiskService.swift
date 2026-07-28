@@ -14,39 +14,24 @@ enum DiskService {
 
     // MARK: - Enumeration
 
-    /// Returns eligible USB targets plus the drives that were filtered out and
-    /// why — the UI shows both so a plugged-in stick never just "disappears".
-    static func scan() async -> (eligible: [USBDrive], rejected: [RejectedDrive]) {
+    /// Returns the drives ImageHub is willing to write to: removable, ejectable,
+    /// external media. Everything else — internal disks above all — is dropped
+    /// here and never surfaces, so there is no way to pick one by mistake.
+    static func scan() async -> [USBDrive] {
         guard let plist = await plistOutput(["list", "-plist"]),
               let entries = plist["AllDisksAndPartitions"] as? [[String: Any]] else {
-            return ([], [])
+            return []
         }
 
         var eligible: [USBDrive] = []
-        var rejected: [RejectedDrive] = []
-
         for entry in entries {
             guard let identifier = entry["DeviceIdentifier"] as? String else { continue }
             guard let drive = await describe(identifier, partitions: entry) else { continue }
-
-            if drive.isEligibleTarget {
-                eligible.append(drive)
-            } else {
-                rejected.append(
-                    RejectedDrive(
-                        id: drive.id,
-                        displayName: drive.displayName,
-                        reason: drive.isInternal
-                            ? "Internal disk — ImageHub never writes to internal storage."
-                            : "Not removable or ejectable media."
-                    )
-                )
-            }
+            if drive.isEligibleTarget { eligible.append(drive) }
         }
 
         eligible.sort { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
-        rejected.sort { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
-        return (eligible, rejected)
+        return eligible
     }
 
     private static func describe(_ identifier: String, partitions entry: [String: Any]) async -> USBDrive? {

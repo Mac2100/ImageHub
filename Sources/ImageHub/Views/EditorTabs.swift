@@ -89,7 +89,9 @@ struct AppsTab: View {
             }
         }
         .sheet(isPresented: $showingCatalog) {
-            AppCatalogSheet { entries in
+            AppCatalogSheet(
+                alreadyAdded: Set(draft.apps.map { $0.packageID }.filter { !$0.isEmpty })
+            ) { entries in
                 for entry in entries where !draft.apps.contains(where: { $0.packageID == entry.id }) {
                     draft.apps.append(entry.selection)
                 }
@@ -243,6 +245,9 @@ struct AppRow: View {
 }
 
 struct AppCatalogSheet: View {
+    /// winget package IDs already in the template, so the catalog can mark them
+    /// instead of letting you pick something you've already got.
+    let alreadyAdded: Set<String>
     let onAdd: ([AppCatalog.Entry]) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -327,14 +332,20 @@ struct AppCatalogSheet: View {
     }
 
     private func row(_ entry: AppCatalog.Entry) -> some View {
+        let added = alreadyAdded.contains(entry.id)
         let isSelected = selected.contains(entry.id)
         return Button {
+            guard !added else { return }
             if isSelected { selected.remove(entry.id) } else { selected.insert(entry.id) }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: added || isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 15))
-                    .foregroundStyle(isSelected ? AnyShapeStyle(theme.primary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(
+                        added
+                            ? AnyShapeStyle(.green)
+                            : isSelected ? AnyShapeStyle(theme.primary) : AnyShapeStyle(.tertiary)
+                    )
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -347,7 +358,9 @@ struct AppCatalogSheet: View {
 
                 Spacer(minLength: 8)
 
-                if !entry.note.isEmpty {
+                if added {
+                    Chip(text: "In template", tint: .green)
+                } else if !entry.note.isEmpty {
                     Text(entry.note)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -359,8 +372,11 @@ struct AppCatalogSheet: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
+            .opacity(added ? 0.6 : 1)
         }
         .buttonStyle(.plain)
+        .disabled(added)
+        .help(added ? "Already in this template" : "")
     }
 }
 

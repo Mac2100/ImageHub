@@ -240,41 +240,28 @@ struct ToolsSettingsView: View {
 
     @State private var installing = false
     @State private var installLog: [String] = []
-    @State private var wimlibVersion: String?
 
     var body: some View {
         Form {
-            Section {
-                LabeledContent("Status") {
-                    if let found = WimTools.locate() {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Label(
-                                WimTools.isUsingBundledCopy ? "Included with ImageHub" : "Installed",
-                                systemImage: "checkmark.circle.fill"
-                            )
-                            .foregroundStyle(.green)
-                            Text(WimTools.isUsingBundledCopy ? "Inside the app bundle" : found)
+            // wimlib ships inside the app, so in the normal case there is
+            // nothing here to configure and nothing to say. This section only
+            // appears when the bundled copy is missing — a source build without
+            // `scripts/build_wimlib.sh`, or an Intel Mac if that slice failed —
+            // where there is an actual action to take.
+            if !WimTools.isUsingBundledCopy {
+                Section {
+                    LabeledContent("Status") {
+                        if let found = WimTools.locate() {
+                            Text(found)
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
-                            if let wimlibVersion {
-                                Text(wimlibVersion)
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
+                        } else {
+                            Label("Not found", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
                         }
-                    } else {
-                        Label("Not found", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
                     }
-                }
 
-                SectionCaption(
-                    text: "wimlib splits an install.wim that's 4 GB or larger — which every current Windows 11 ISO has — so it fits the FAT32 volume UEFI can boot from. It happens automatically during a build. Reading edition lists doesn't need it."
-                )
-
-                // Only worth showing when the bundled copy is missing.
-                if !WimTools.isUsingBundledCopy {
                     HStack {
                         Button {
                             installViaBrew()
@@ -296,50 +283,36 @@ struct ToolsSettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Link("wimlib.net", destination: URL(string: "https://wimlib.net")!)
-                            .font(.caption)
                     }
-                }
 
-                if WimTools.isUsingBundledCopy {
-                    HStack {
-                        Text(
-                            "wimlib \(WimTools.bundledVersion ?? "") is GPLv3-licensed and runs as a separate program; ImageHub itself stays MIT."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        if let license = WimTools.licenseURL {
-                            Button("Licence") { NSWorkspace.shared.open(license) }
-                                .controlSize(.small)
-                        }
-                    }
-                }
+                    PathField(
+                        label: "Custom path",
+                        path: $wimlibPath,
+                        prompt: "Search Homebrew and /usr/local"
+                    )
 
-                PathField(
-                    label: "Custom path",
-                    path: $wimlibPath,
-                    prompt: "Search Homebrew and /usr/local"
-                )
+                    SectionCaption(
+                        text: "wimlib splits an install.wim of 4 GB or more so it fits the FAT32 volume UEFI can boot from. It normally ships inside ImageHub; this copy doesn't have it."
+                    )
 
-                if !installLog.isEmpty {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 1) {
-                            ForEach(Array(installLog.enumerated()), id: \.offset) { entry in
-                                Text(entry.element)
-                                    .font(.system(size: 10.5).monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                    if !installLog.isEmpty {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 1) {
+                                ForEach(Array(installLog.enumerated()), id: \.offset) { entry in
+                                    Text(entry.element)
+                                        .font(.system(size: 10.5).monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                             }
+                            .padding(6)
                         }
-                        .padding(6)
+                        .frame(height: 110)
+                        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .frame(height: 110)
-                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                } header: {
+                    Text("wimlib")
                 }
-            } header: {
-                Text("wimlib")
             }
 
             Section {
@@ -357,9 +330,6 @@ struct ToolsSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .task {
-            wimlibVersion = await WimTools.version()
-        }
     }
 
     private func installViaBrew() {
@@ -370,7 +340,6 @@ struct ToolsSettingsView: View {
                 try await WimTools.installViaHomebrew { line in
                     Task { @MainActor in installLog.append(line) }
                 }
-                wimlibVersion = await WimTools.version()
                 ToastCenter.shared.show(
                     "wimlib installed",
                     detail: WimTools.locate() ?? ""
@@ -544,6 +513,26 @@ struct AboutSettingsView: View {
                 )
             }
             .padding(.top, 6)
+
+            // The DMG contains a GPLv3 program, so the attribution lives here
+            // rather than cluttering the tab where it used to be.
+            if WimTools.isUsingBundledCopy {
+                VStack(spacing: 4) {
+                    Text("Includes wimlib \(WimTools.bundledVersion ?? "") — GPLv3, run as a separate program.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    HStack(spacing: 14) {
+                        Link("wimlib.net", destination: URL(string: "https://wimlib.net")!)
+                        if let license = WimTools.licenseURL {
+                            Button("GPLv3 Licence") { NSWorkspace.shared.open(license) }
+                                .buttonStyle(.link)
+                        }
+                    }
+                    .font(.caption)
+                }
+                .padding(.top, 14)
+            }
+
             Spacer()
         }
         .frame(maxWidth: .infinity)

@@ -205,6 +205,84 @@ struct NoticeBanner: View {
     }
 }
 
+/// Same look as `NoticeBanner`, but every line is a button that jumps to the part
+/// of the template the problem came from. Used by the editor's Review tab, where
+/// "Admin account has no password set." is only useful if it can take you there.
+struct IssueBanner: View {
+    let kind: NoticeBanner.Kind
+    let title: String
+    let issues: [ValidationIssue]
+    let destination: (ValidationIssue) -> String
+    let action: (ValidationIssue) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind.color)
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                ForEach(issues) { issue in
+                    IssueRow(
+                        issue: issue,
+                        tint: kind.color,
+                        destination: destination(issue),
+                        action: { action(issue) }
+                    )
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(kind.color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(kind.color.opacity(0.25), lineWidth: 1)
+        )
+    }
+}
+
+private struct IssueRow: View {
+    let issue: ValidationIssue
+    let tint: Color
+    let destination: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(issue.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                HStack(spacing: 2) {
+                    Text(destination)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(tint)
+                .opacity(hovering ? 1 : 0.65)
+            }
+            .padding(.vertical, 3)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(tint.opacity(hovering ? 0.12 : 0))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Go to \(destination)")
+    }
+}
+
 /// Empty-state placeholder with an optional call to action.
 struct EmptyStateView<Action: View>: View {
     let symbol: String

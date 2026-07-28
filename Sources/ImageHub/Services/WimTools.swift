@@ -77,12 +77,6 @@ enum WimTools {
 
     static var isAvailable: Bool { locate() != nil }
 
-    static func version() async -> String? {
-        guard let tool = locate(),
-              let output = await Shell.output(tool, ["--version"]) else { return nil }
-        return output.split(separator: "\n").first.map(String.init)
-    }
-
     /// Splits `source` into `install.swm`, `install2.swm`, … next to `destination`.
     /// `destination` is the path of the first part.
     static func split(

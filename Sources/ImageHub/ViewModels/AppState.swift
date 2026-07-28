@@ -47,7 +47,6 @@ final class AppState: ObservableObject {
 
     // Drives
     @Published var drives: [USBDrive] = []
-    @Published var rejectedDrives: [RejectedDrive] = []
     @Published var isScanningDrives = false
     @Published var selectedDriveID: String?
 
@@ -105,9 +104,7 @@ final class AppState: ObservableObject {
 
     func refreshDrives() async {
         isScanningDrives = true
-        let result = await DiskService.scan()
-        drives = result.eligible
-        rejectedDrives = result.rejected
+        drives = await DiskService.scan()
         if let selected = selectedDriveID, !drives.contains(where: { $0.id == selected }) {
             selectedDriveID = drives.first?.id
         } else if selectedDriveID == nil {
