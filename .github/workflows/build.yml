@@ -54,6 +54,31 @@ jobs:
       - name: Build app, zip, and DMG
         run: ./scripts/make_app.sh
 
+      - name: Verify the generated answer file and payload config
+        run: |
+          set -euo pipefail
+          BIN="dist/ImageHub.app/Contents/MacOS/ImageHub"
+
+          # autounattend.xml is the artifact with the least margin for error —
+          # a malformed one fails on a technician's bench, not here.
+          "$BIN" --emit-answer-file > /tmp/autounattend.xml
+          xmllint --noout /tmp/autounattend.xml
+          echo "answer file is well-formed ($(wc -c < /tmp/autounattend.xml) bytes)"
+
+          # Every pass Setup reads must be present, or the drive boots and then
+          # sits waiting for a human.
+          for pass in windowsPE specialize oobeSystem; do
+            grep -q "pass=\"${pass}\"" /tmp/autounattend.xml \
+              || { echo "::error::answer file is missing the ${pass} pass"; exit 1; }
+          done
+          grep -q "ImageHub\\\\Provision.ps1" /tmp/autounattend.xml \
+            || { echo "::error::answer file never launches Provision.ps1"; exit 1; }
+
+          # The payload config is what Provision.ps1 parses.
+          "$BIN" --emit-payload-config > /tmp/config.json
+          python3 -c "import json,sys; json.load(open('/tmp/config.json'))"
+          echo "payload config is valid JSON"
+
       - name: Read app version
         id: version
         run: |

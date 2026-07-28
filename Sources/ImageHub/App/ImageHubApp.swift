@@ -6,6 +6,10 @@ struct ImageHubApp: App {
     @StateObject private var appState = AppState.shared
     @StateObject private var themeStore = ThemeStore.shared
 
+    init() {
+        CommandLineTools.runIfRequested()
+    }
+
     var body: some Scene {
         Window("ImageHub", id: "main") {
             ContentView()
