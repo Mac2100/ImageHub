@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Mac2100/ImageHub/blob/main/Shared/schema/template.schema.json",
+  "title": "ImageHub deployment template",
+  "description": "The contract between the macOS app (Sources/ImageHub/Models/Template.swift) and the Windows builder (Windows/ImageHub.ps1). Every field is optional: readers fall back to the documented default, so a three-line template is valid.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "integer", "default": 1 },
+    "id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "default": "New Template" },
+    "summary": { "type": "string", "default": "" },
+    "symbol": {
+      "type": "string",
+      "default": "desktopcomputer",
+      "description": "SF Symbol name shown in the macOS app."
+    },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+
+    "windows": {
+      "type": "object",
+      "properties": {
+        "release": { "enum": ["win11", "win10"], "default": "win11" },
+        "edition": {
+          "enum": ["pro", "proWorkstations", "enterprise", "education", "proEducation", "home"],
+          "default": "pro"
+        },
+        "language": { "type": "string", "default": "en-US" },
+        "architecture": { "enum": ["x64", "arm64"], "default": "x64" },
+        "imageSource": {
+          "enum": ["latestFromMicrosoft", "libraryImage", "customWim"],
+          "default": "latestFromMicrosoft"
+        },
+        "libraryImageID": { "type": "string", "format": "uuid" },
+        "customWimPath": {
+          "type": "string",
+          "default": "",
+          "description": "A sysprepped install.wim/.esd used instead of the one inside the ISO."
+        },
+        "imageIndex": {
+          "type": "integer",
+          "description": "Overrides edition-name matching inside install.wim."
+        },
+        "productKeyMode": { "enum": ["none", "generic", "custom"], "default": "generic" },
+        "acceptEULA": { "type": "boolean", "default": true }
+      }
+    },
+
+    "disk": {
+      "type": "object",
+      "description": "Describes the TARGET MACHINE's disk, not the USB stick.",
+      "properties": {
+        "wipeTargetDisk": { "type": "boolean", "default": true },
+        "diskNumber": { "type": "integer", "default": 0 },
+        "partitionStyle": { "enum": ["gpt", "mbr"], "default": "gpt" },
+        "efiSizeMB": { "type": "integer", "default": 300 },
+        "msrSizeMB": { "type": "integer", "default": 16 },
+        "recoveryPartition": { "type": "boolean", "default": true },
+        "recoverySizeMB": { "type": "integer", "default": 1000 },
+        "wipeAllDisks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wipes disks 0-3, destroying secondary data drives too."
+        }
+      }
+    },
+
+    "admin": {
+      "type": "object",
+      "description": "The local IT admin profile. Its password lives in the macOS Keychain (or a .secrets.json sidecar on Windows), never here.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "username": { "type": "string", "default": "ITAdmin" },
+        "displayName": { "type": "string", "default": "IT Administrator" },
+        "accountDescription": { "type": "string" },
+        "autoLogonCount": {
+          "type": "integer",
+          "default": 1,
+          "description": "Must be at least 1 for provisioning to run."
+        },
+        "passwordNeverExpires": { "type": "boolean", "default": true },
+        "hideFromLoginScreen": { "type": "boolean", "default": false },
+        "enableBuiltInAdministrator": { "type": "boolean", "default": false }
+      }
+    },
+
+    "endUser": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": ["leaveOOBE", "createLocalAccount", "promptAtFirstBoot"],
+          "default": "leaveOOBE"
+        },
+        "username": { "type": "string", "default": "" },
+        "displayName": { "type": "string", "default": "" },
+        "administrator": { "type": "boolean", "default": false },
+        "mustChangePassword": { "type": "boolean", "default": true },
+        "welcomeNote": { "type": "string", "default": "" }
+      }
+    },
+
+    "identity": {
+      "type": "object",
+      "properties": {
+        "joinMode": {
+          "enum": ["workgroup", "activeDirectory", "entraAtOOBE"],
+          "default": "workgroup"
+        },
+        "workgroup": { "type": "string", "default": "WORKGROUP" },
+        "domain": { "type": "string", "default": "" },
+        "organizationalUnit": { "type": "string", "default": "" },
+        "domainJoinUser": { "type": "string", "default": "" }
+      }
+    },
+
+    "apps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "source": { "enum": ["winget", "installer", "script"], "default": "winget" },
+          "packageID": { "type": "string", "description": "winget package ID, e.g. Google.Chrome" },
+          "version": { "type": "string", "description": "Empty means latest." },
+          "installerPath": { "type": "string", "description": "Local file copied into the payload." },
+          "silentArgs": { "type": "string", "description": "e.g. /qn /norestart" },
+          "script": { "type": "string", "description": "Inline PowerShell for source=script." },
+          "enabled": { "type": "boolean", "default": true },
+          "required": {
+            "type": "boolean",
+            "default": false,
+            "description": "Fail the provisioning run if this app doesn't install."
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+
+    "system": {
+      "type": "object",
+      "properties": {
+        "computerNameTemplate": {
+          "type": "string",
+          "default": "IT-%SERIAL4%",
+          "description": "Tokens: %SERIAL%, %SERIAL4%, %MODEL%, %RANDOM4%, %TEMPLATE%."
+        },
+        "timeZone": {
+          "type": "string",
+          "default": "Pacific Standard Time",
+          "description": "A Windows time zone ID as accepted by tzutil."
+        },
+        "locale": { "type": "string", "default": "en-US" },
+        "inputLocale": { "type": "string", "default": "0409:00000409" },
+        "enableRemoteDesktop": { "type": "boolean", "default": false },
+        "allowPing": { "type": "boolean", "default": false },
+        "powerPlan": {
+          "enum": ["balanced", "highPerformance", "powerSaver"],
+          "default": "balanced"
+        },
+        "disableSleepOnAC": { "type": "boolean", "default": true },
+        "disableFastStartup": { "type": "boolean", "default": false },
+        "disableHibernation": { "type": "boolean", "default": false },
+        "showFileExtensions": { "type": "boolean", "default": true },
+        "showHiddenFiles": { "type": "boolean", "default": false },
+        "classicContextMenu": { "type": "boolean", "default": false },
+        "taskbarAlignLeft": { "type": "boolean", "default": false },
+        "disableWidgets": { "type": "boolean", "default": false },
+        "disableWebSearch": { "type": "boolean", "default": false },
+        "disableTelemetry": { "type": "boolean", "default": true },
+        "disableConsumerFeatures": { "type": "boolean", "default": true },
+        "removeBloatware": { "type": "boolean", "default": true },
+        "bloatwareList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "AppX package names removed for all users and de-provisioned."
+        },
+        "windowsUpdate": {
+          "enum": ["automatic", "notifyBeforeDownload", "disableAutomaticRestart"],
+          "default": "automatic"
+        },
+        "installUpdatesDuringProvisioning": { "type": "boolean", "default": false },
+        "optionalFeatures": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "DISM feature names, e.g. NetFx3, Microsoft-Hyper-V-All."
+        },
+        "bitLocker": { "enum": ["off", "tpmOnly", "tpmWithPin"], "default": "off" },
+        "enableBitLockerRecoveryToAD": { "type": "boolean", "default": false },
+        "wifi": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "ssid": { "type": "string" },
+            "hidden": { "type": "boolean", "default": false },
+            "security": { "enum": ["WPA2PSK", "WPA3SAE", "open"], "default": "WPA2PSK" },
+            "connectAutomatically": { "type": "boolean", "default": true }
+          }
+        },
+        "registryTweaks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "format": "uuid" },
+              "path": { "type": "string", "description": "PowerShell registry path, e.g. HKLM:\\SOFTWARE\\..." },
+              "name": { "type": "string" },
+              "type": {
+                "enum": ["DWord", "QWord", "String", "ExpandString", "MultiString"],
+                "default": "DWord"
+              },
+              "value": { "type": "string" },
+              "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        },
+        "wallpaperPath": { "type": "string", "default": "" },
+        "lockScreenPath": { "type": "string", "default": "" },
+        "startLayoutPath": { "type": "string", "default": "" },
+        "bypassWin11Requirements": {
+          "type": "boolean",
+          "default": false,
+          "description": "Sets the LabConfig keys so Windows 11 installs without TPM 2.0 / Secure Boot / the CPU floor. Unsupported by Microsoft."
+        },
+        "bypassNetworkRequirement": { "type": "boolean", "default": true }
+      }
+    },
+
+    "oobe": {
+      "type": "object",
+      "properties": {
+        "hideEULA": { "type": "boolean", "default": true },
+        "hideOEMRegistration": { "type": "boolean", "default": true },
+        "hideOnlineAccountScreens": { "type": "boolean", "default": true },
+        "hideWirelessSetup": { "type": "boolean", "default": false },
+        "skipMachineOOBE": { "type": "boolean", "default": true },
+        "skipUserOOBE": { "type": "boolean", "default": false },
+        "protectYourPC": {
+          "enum": [1, 3],
+          "default": 3,
+          "description": "1 = recommended settings, 3 = critical updates only."
+        }
+      }
+    },
+
+    "scripts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "phase": {
+            "enum": ["specialize", "provision", "finalize"],
+            "default": "provision",
+            "description": "specialize runs as SYSTEM during Setup; provision runs after apps and config; finalize runs last."
+          },
+          "body": { "type": "string", "description": "PowerShell source." },
+          "enabled": { "type": "boolean", "default": true },
+          "continueOnError": { "type": "boolean", "default": true }
+        }
+      }
+    }
+  }
+}

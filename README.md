@@ -1,0 +1,212 @@
+# ImageHub
+
+Native macOS app for building **bootable Windows golden-image USB drives** from
+reusable deployment templates. Built for IT departments that reimage machines by
+hand and want the whole thing to be one workflow: wipe the computer, build the
+stick, boot it, walk away.
+
+![ImageHub icon](Resources/icon_1024.png)
+
+A template describes what a finished machine looks like — Windows edition, disk
+layout, IT admin profile, applications, system configuration, first-boot
+experience — and ImageHub turns it into unattended install media. Boot a target
+machine from the drive and it wipes the disk, installs Windows, creates the
+accounts, installs the apps, applies the configuration, and stops at a summary
+screen. No keystrokes in between.
+
+## Features
+
+- **Deployment templates** — as many as you like, each a plain JSON file you can
+  export, review in a pull request, and share with the team. Icon, name, and a
+  one-line summary; a Review tab that shows the generated answer file and lists
+  exactly what's blocking a build.
+- **Windows image library** — download the current retail ISO straight from
+  Microsoft, import one you already have (VLSC/Enterprise media), or pull one
+  from an internal URL with a **pinned SHA-256** so everybody builds from the
+  same bytes. Editions inside `install.wim` are read natively, no external tools.
+- **Wipe and reimage in one pass** — the generated `autounattend.xml` wipes the
+  target disk, lays down EFI/MSR/Windows partitions, and installs the edition the
+  template asks for.
+- **IT admin profile** — a local administrator account with a password kept in
+  your macOS Keychain, auto-logon for the provisioning run, optional hiding from
+  the sign-in screen afterwards.
+- **Applications** — winget package IDs (with a built-in catalog of ~30 packages
+  IT actually deploys), bundled MSI/EXE installers copied onto the stick for
+  offline or version-pinned installs, or inline PowerShell. Per-app "fail the
+  build if this doesn't install".
+- **System configuration** — time zone and locale, power plan, Remote Desktop,
+  Explorer and taskbar defaults written to the *default user profile*, telemetry
+  and consumer-feature policies, AppX debloat list, optional Windows features,
+  Windows Update policy, BitLocker, Wi-Fi profile, wallpaper/lock screen/Start
+  layout, and arbitrary registry values.
+- **End-user setup** — leave Windows OOBE to whoever receives the machine,
+  pre-create a named local account, or have provisioning prompt the technician
+  at first boot. Workgroup, Active Directory domain join, or leave the device
+  unjoined for Entra ID / Intune enrolment.
+- **Custom PowerShell** — hooks in three phases (Setup `specialize`,
+  provisioning, finalize) for anything the template can't express.
+- **Live build view** — eight stages with per-stage progress, a streaming log,
+  cancel, and a saved log per build in Build History.
+- **Safety by construction** — only removable external media is ever offered as a
+  target; internal disks are filtered out and listed with the reason. The drive
+  is re-verified immediately before erasing, and the finished media is checked
+  for its boot files before the build is called done.
+- **Themes** — six accent themes and a System/Light/Dark appearance override
+  (Settings → Appearance).
+- **One-click updates** — optional check against GitHub Releases at launch plus
+  "Check for Updates…" in the app menu; installing downloads the DMG, swaps the
+  app in place, and relaunches.
+
+## Installation
+
+### Download
+
+Grab the latest `ImageHub-x.y.z.dmg` from
+[Releases](https://github.com/Mac2100/ImageHub/releases), open it, and drag
+**ImageHub** into **Applications**.
+
+> **Note on Gatekeeper:** releases are ad-hoc signed (no paid Apple Developer
+> certificate), so the first launch requires right-clicking the app → **Open**, or:
+> ```bash
+> xattr -d com.apple.quarantine /Applications/ImageHub.app
+> ```
+
+### Build from source
+
+Requires Xcode 15+ / Swift 5.9+ on macOS 14 or later.
+
+```bash
+git clone https://github.com/Mac2100/ImageHub.git
+cd ImageHub
+./scripts/make_app.sh    # dist/ImageHub.app, ImageHub-<version>.dmg, and a .zip
+```
+
+For development, `swift run` works directly, or open `Package.swift` in Xcode.
+
+### One dependency: wimlib
+
+Every current Windows 11 ISO has an `install.wim` larger than 4 GB. UEFI firmware
+is only *guaranteed* to read FAT, so Windows Setup media has to be FAT32 — which
+has a 4 GB per-file ceiling. The file therefore has to be split into
+`install.swm` parts, which Setup reads natively. ImageHub uses
+[wimlib](https://wimlib.net) for that one job:
+
+```bash
+brew install wimlib
+```
+
+Settings → Tools has a one-click Homebrew install, shows where it found the tool,
+and lets you point at a copy elsewhere. Everything else — reading edition lists,
+formatting, copying, generating the answer file — is done with tools already on
+macOS (`diskutil`, `hdiutil`, `rsync`).
+
+## How a build works
+
+1. **Validate** the template and re-check the drive is still removable external media.
+2. **Erase** the drive and create a single FAT32 volume (MBR by default — the most
+   widely bootable layout for Setup media).
+3. **Copy** the mounted ISO to it, excluding the install image.
+4. **Write the install image** — copied straight across if it's under 4 GB, split
+   into `install*.swm` with wimlib if not. A template can substitute its own
+   captured `install.wim` here.
+5. **Generate `autounattend.xml`** from the template, injecting secrets from the
+   Keychain at this moment and nowhere else.
+6. **Write the `ImageHub\` payload** — `Provision.ps1`, a resolved `config.json`,
+   bundled installers, assets, and custom scripts.
+7. **Verify** `bootmgr`, `boot/bcd`, `sources/boot.wim`, the install image, the
+   answer file, and the payload are all present.
+
+On the target machine, Setup consumes the answer file, stages the payload to
+`C:\ImageHub`, signs in as the IT admin account once, and runs `Provision.ps1`,
+which does the application installs and configuration and logs everything to
+`C:\ImageHub\logs`. See [`Shared/payload/README.md`](Shared/payload/README.md) for
+the full order of operations.
+
+## Two kinds of "golden image"
+
+ImageHub supports both, per template:
+
+- **Stock ISO + provisioning** (default) — Microsoft's unmodified `install.wim`
+  plus an answer file and provisioning payload. Templates are kilobytes, diff
+  cleanly in git, need no Windows machine to build, and are trivial to amend.
+- **A captured reference image** — set the template's image source to
+  *Captured install.wim* and point at a sysprepped (`/generalize /oobe`) image
+  from a reference machine or a share. Setup still boots from Microsoft's media;
+  only the installed image is yours. Provisioning still runs on top, so the two
+  approaches compose.
+
+## Windows
+
+[`Windows/ImageHub.ps1`](Windows/ImageHub.ps1) is the Windows-side builder. It
+reads the same template JSON, generates the same `autounattend.xml`, and writes
+the same payload, using `diskpart`/`Mount-DiskImage`/`robocopy`/`DISM` instead of
+the macOS tools — so a drive built on Windows is interchangeable with one built on
+a Mac, and no extra tools are needed there (DISM splits WIMs itself).
+
+```powershell
+# From an elevated PowerShell session, inside the checkout
+.\Windows\ImageHub.ps1 -ListDisks
+.\Windows\ImageHub.ps1 -Template .\StandardWorkstation.json -Iso D:\iso\Win11_24H2.iso -DiskNumber 3
+```
+
+Passwords are read from a `<template>.secrets.json` sidecar if present, otherwise
+prompted for — they are never stored in the template, which keeps templates safe
+to commit.
+
+**Current state:** the Windows side is a complete command-line builder, not yet a
+GUI. The template schema
+([`Shared/schema/template.schema.json`](Shared/schema/template.schema.json)) is
+the documented contract, so a native WinUI front-end is a second client over
+logic that already exists rather than a rewrite. CI only builds the macOS app.
+
+## Security notes
+
+- Template passwords, product keys, domain-join credentials, and Wi-Fi
+  passphrases are stored **only** in the macOS Keychain. They are never written
+  into template JSON, so templates are safe to export and commit.
+- They leave the Keychain in exactly one place: writing a drive. Windows Setup
+  reads account passwords from `autounattend.xml` in **clear text** — that is how
+  the format works — so **treat a finished USB drive as a credential.** The app
+  says so before every build.
+- `Provision.ps1` deletes `config.json` and the staged `unattend.xml` copies from
+  the target machine once it has consumed them.
+- Enabling BitLocker writes the recovery key to `C:\ImageHub\logs\` so you can
+  collect it at handover. Move it into your key escrow and delete the file — both
+  the app and the script warn about this.
+- ImageHub never mirrors or modifies Microsoft's images. "Download from Microsoft"
+  uses the same public download service as microsoft.com and the bytes come from
+  Microsoft's CDN. That service rate-limits by IP and commonly blocks VPN and
+  datacentre ranges; when it refuses, import an ISO or use an internal URL.
+- The only other network requests the app makes are the optional, off-switchable
+  update check against the public GitHub Releases API and ISO downloads you ask for.
+
+## Repository layout
+
+```
+Sources/ImageHub/          SwiftUI app
+  Models/                  Template schema, images, drives, build jobs
+  Services/                Disk, ISO, WIM, answer file, payload, updates
+  ViewModels/AppState      App-wide state and the build queue
+  Views/                   UI, theme system, settings
+Shared/payload/            Provision.ps1 — copied onto every drive (shared)
+Shared/schema/             JSON Schema for templates and the payload config
+Windows/ImageHub.ps1       Windows-side builder over the same schema
+scripts/make_app.sh        Universal build → .app, .zip, .dmg
+scripts/make_icon.py       Regenerates the app icon
+```
+
+## CI / Releases
+
+Every push and pull request builds the universal app and uploads both a DMG and a
+zipped `.app` as artifacts, and parses the PowerShell payload to catch syntax
+errors early. Pushing a tag like `v1.2.0` additionally creates a GitHub Release
+with both files attached — which is what the in-app update checker looks at.
+
+To cut a release: bump `AppVersion.marketing` in
+`Sources/ImageHub/Support/AppVersion.swift`, then tag the commit `v<version>` and
+push the tag. Or run the workflow manually with **Publish a GitHub Release**
+ticked.
+
+## License
+
+[MIT](LICENSE)

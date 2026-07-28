@@ -1,0 +1,155 @@
+import Foundation
+
+/// A curated shortlist of winget packages IT departments actually deploy, so the
+/// common case is a click instead of typing a package ID from memory.
+///
+/// This is a convenience list, not a limit — any winget ID can be typed in, and
+/// bundled installers cover everything winget doesn't have.
+enum AppCatalog {
+    struct Entry: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let category: String
+        var note: String = ""
+
+        var selection: AppSelection {
+            AppSelection(name: name, packageID: id, notes: note)
+        }
+    }
+
+    static let entries: [Entry] = [
+        // Browsers
+        Entry(id: "Google.Chrome", name: "Google Chrome", category: "Browsers"),
+        Entry(id: "Mozilla.Firefox", name: "Mozilla Firefox", category: "Browsers"),
+        Entry(id: "Microsoft.Edge", name: "Microsoft Edge", category: "Browsers", note: "Preinstalled on Windows 11"),
+
+        // Productivity
+        Entry(id: "Microsoft.Office", name: "Microsoft 365 Apps", category: "Productivity", note: "Needs a licence assigned at sign-in"),
+        Entry(id: "Adobe.Acrobat.Reader.64-bit", name: "Adobe Acrobat Reader", category: "Productivity"),
+        Entry(id: "Microsoft.Teams", name: "Microsoft Teams", category: "Productivity"),
+        Entry(id: "Zoom.Zoom", name: "Zoom", category: "Productivity"),
+        Entry(id: "Slack.Slack", name: "Slack", category: "Productivity"),
+        Entry(id: "Notion.Notion", name: "Notion", category: "Productivity"),
+        Entry(id: "Libreoffice.Libreoffice", name: "LibreOffice", category: "Productivity"),
+
+        // Utilities
+        Entry(id: "7zip.7zip", name: "7-Zip", category: "Utilities"),
+        Entry(id: "Microsoft.PowerToys", name: "PowerToys", category: "Utilities"),
+        Entry(id: "Notepad++.Notepad++", name: "Notepad++", category: "Utilities"),
+        Entry(id: "VideoLAN.VLC", name: "VLC", category: "Utilities"),
+        Entry(id: "voidtools.Everything", name: "Everything", category: "Utilities"),
+        Entry(id: "WinDirStat.WinDirStat", name: "WinDirStat", category: "Utilities"),
+        Entry(id: "CrystalDewWorld.CrystalDiskInfo", name: "CrystalDiskInfo", category: "Utilities"),
+
+        // Remote support
+        Entry(id: "TeamViewer.TeamViewer", name: "TeamViewer", category: "Remote support"),
+        Entry(id: "RealVNC.VNCViewer", name: "RealVNC Viewer", category: "Remote support"),
+        Entry(id: "AnyDeskSoftwareGmbH.AnyDesk", name: "AnyDesk", category: "Remote support"),
+
+        // Runtimes
+        Entry(id: "Microsoft.EdgeWebView2Runtime", name: "Edge WebView2 Runtime", category: "Runtimes"),
+        Entry(id: "Microsoft.VCRedist.2015+.x64", name: "Visual C++ Redistributable", category: "Runtimes"),
+        Entry(id: "Microsoft.DotNet.DesktopRuntime.8", name: ".NET 8 Desktop Runtime", category: "Runtimes"),
+        Entry(id: "Oracle.JavaRuntimeEnvironment", name: "Java Runtime", category: "Runtimes"),
+
+        // Developer
+        Entry(id: "Microsoft.VisualStudioCode", name: "Visual Studio Code", category: "Developer"),
+        Entry(id: "Git.Git", name: "Git", category: "Developer"),
+        Entry(id: "Python.Python.3.12", name: "Python 3.12", category: "Developer"),
+        Entry(id: "Microsoft.WindowsTerminal", name: "Windows Terminal", category: "Developer"),
+        Entry(id: "PuTTY.PuTTY", name: "PuTTY", category: "Developer"),
+
+        // Security
+        Entry(id: "Bitwarden.Bitwarden", name: "Bitwarden", category: "Security"),
+        Entry(id: "1Password.1Password", name: "1Password", category: "Security"),
+        Entry(id: "Malwarebytes.Malwarebytes", name: "Malwarebytes", category: "Security")
+    ]
+
+    static var categories: [String] {
+        var seen: [String] = []
+        for entry in entries where !seen.contains(entry.category) {
+            seen.append(entry.category)
+        }
+        return seen
+    }
+
+    static func entries(in category: String) -> [Entry] {
+        entries.filter { $0.category == category }
+    }
+
+    static func search(_ query: String) -> [Entry] {
+        guard !query.isEmpty else { return entries }
+        return entries.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.id.localizedCaseInsensitiveContains(query)
+                || $0.category.localizedCaseInsensitiveContains(query)
+        }
+    }
+}
+
+/// Windows time zone IDs (the `tzutil` names an answer file needs) for the
+/// regions most fleets sit in.
+enum WindowsTimeZones {
+    static let all: [String] = [
+        "Dateline Standard Time",
+        "Hawaiian Standard Time",
+        "Alaskan Standard Time",
+        "Pacific Standard Time",
+        "Mountain Standard Time",
+        "Central Standard Time",
+        "Eastern Standard Time",
+        "Atlantic Standard Time",
+        "SA Pacific Standard Time",
+        "E. South America Standard Time",
+        "GMT Standard Time",
+        "Greenwich Standard Time",
+        "W. Europe Standard Time",
+        "Central Europe Standard Time",
+        "Romance Standard Time",
+        "E. Europe Standard Time",
+        "FLE Standard Time",
+        "Israel Standard Time",
+        "Arabian Standard Time",
+        "Russian Standard Time",
+        "India Standard Time",
+        "China Standard Time",
+        "Singapore Standard Time",
+        "W. Australia Standard Time",
+        "Tokyo Standard Time",
+        "Korea Standard Time",
+        "AUS Eastern Standard Time",
+        "New Zealand Standard Time",
+        "UTC"
+    ]
+}
+
+/// Locale / keyboard pairs offered in the editor.
+enum WindowsLocales {
+    static let all: [(locale: String, input: String, label: String)] = [
+        ("en-US", "0409:00000409", "English (United States)"),
+        ("en-GB", "0809:00000809", "English (United Kingdom)"),
+        ("en-CA", "1009:00000409", "English (Canada)"),
+        ("en-AU", "0c09:00000409", "English (Australia)"),
+        ("fr-FR", "040c:0000040c", "French (France)"),
+        ("fr-CA", "0c0c:00001009", "French (Canada)"),
+        ("de-DE", "0407:00000407", "German (Germany)"),
+        ("es-ES", "0c0a:0000040a", "Spanish (Spain)"),
+        ("es-MX", "080a:0000080a", "Spanish (Mexico)"),
+        ("it-IT", "0410:00000410", "Italian (Italy)"),
+        ("nl-NL", "0413:00020409", "Dutch (Netherlands)"),
+        ("pt-BR", "0416:00000416", "Portuguese (Brazil)"),
+        ("sv-SE", "041d:0000041d", "Swedish (Sweden)"),
+        ("da-DK", "0406:00000406", "Danish (Denmark)"),
+        ("nb-NO", "0414:00000414", "Norwegian (Bokmål)"),
+        ("fi-FI", "040b:0000040b", "Finnish (Finland)"),
+        ("pl-PL", "0415:00000415", "Polish (Poland)"),
+        ("ja-JP", "0411:00000411", "Japanese (Japan)"),
+        ("ko-KR", "0412:00000412", "Korean (Korea)"),
+        ("zh-CN", "0804:00000804", "Chinese (Simplified)"),
+        ("zh-TW", "0404:00000404", "Chinese (Traditional)")
+    ]
+
+    static func input(for locale: String) -> String {
+        all.first { $0.locale == locale }?.input ?? "0409:00000409"
+    }
+}

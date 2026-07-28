@@ -1,0 +1,87 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Publish a GitHub Release (tagged v<app version>) from this run"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build macOS app + DMG
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Check the provisioning scripts parse
+        run: |
+          # PowerShell isn't needed to build the app, but a syntax error in the
+          # payload would only surface on a technician's machine at 2am.
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh -NoProfile -Command '
+              $ErrorActionPreference = "Stop"
+              foreach ($file in Get-ChildItem -Recurse -Filter *.ps1 -Path Shared, Windows) {
+                $errors = $null
+                [System.Management.Automation.Language.Parser]::ParseFile(
+                  $file.FullName, [ref]$null, [ref]$errors) | Out-Null
+                if ($errors) {
+                  Write-Host "::error file=$($file.FullName)::$($errors[0].Message)"
+                  exit 1
+                }
+                Write-Host "ok: $($file.Name)"
+              }'
+          else
+            echo "pwsh not available on this runner; skipping the PowerShell parse check."
+          fi
+
+      - name: Build app, zip, and DMG
+        run: ./scripts/make_app.sh
+
+      - name: Read app version
+        id: version
+        run: |
+          version=$(sed -n 's/.*marketing = "\([^"]*\)".*/\1/p' Sources/ImageHub/Support/AppVersion.swift)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageHub-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Upload app bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageHub-app-universal
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+          generate_release_notes: true
+          # On tag pushes, release under that tag; on manual dispatch, create
+          # the tag v<app version> at the built commit.
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.version.outputs.version) }}

@@ -1,0 +1,245 @@
+import AppKit
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Wrappers around `NSOpenPanel` / `NSSavePanel`, kept in one place so the views
+/// stay declarative.
+enum Panels {
+    static func chooseFile(
+        title: String,
+        types: [UTType]? = nil,
+        directories: Bool = false
+    ) -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = title
+        panel.prompt = "Choose"
+        panel.canChooseFiles = !directories
+        panel.canChooseDirectories = directories
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        if let types { panel.allowedContentTypes = types }
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+
+    static func save(title: String, suggestedName: String, types: [UTType]? = nil) -> URL? {
+        let panel = NSSavePanel()
+        panel.title = title
+        panel.nameFieldStringValue = suggestedName
+        if let types { panel.allowedContentTypes = types }
+        return panel.runModal() == .OK ? panel.url : nil
+    }
+}
+
+/// A read-only path display with Choose / Clear buttons.
+struct PathField: View {
+    let label: String
+    @Binding var path: String
+    var prompt: String = "Not set"
+    var types: [UTType]?
+    var directories = false
+
+    var body: some View {
+        LabeledContent(label) {
+            HStack(spacing: 6) {
+                Text(display)
+                    .font(.callout)
+                    .foregroundStyle(path.isEmpty ? .tertiary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(path.isEmpty ? prompt : path)
+
+                Button("Choose…") {
+                    if let url = Panels.chooseFile(
+                        title: label, types: types, directories: directories
+                    ) {
+                        path = url.path
+                    }
+                }
+                .controlSize(.small)
+
+                if !path.isEmpty {
+                    Button {
+                        path = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear")
+                }
+            }
+        }
+    }
+
+    private var display: String {
+        path.isEmpty ? prompt : (path as NSString).lastPathComponent
+    }
+}
+
+/// A password field backed by the Keychain rather than the template JSON.
+struct KeychainPasswordField: View {
+    let label: String
+    let templateID: UUID
+    let slot: Keychain.Slot
+    var footer: String?
+
+    @State private var value = ""
+    @State private var stored = false
+    @State private var revealed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent(label) {
+                HStack(spacing: 6) {
+                    if revealed {
+                        TextField("", text: $value)
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        SecureField(stored ? "••••••••" : "", text: $value)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    Button {
+                        revealed.toggle()
+                    } label: {
+                        Image(systemName: revealed ? "eye.slash" : "eye")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(revealed ? "Hide" : "Show")
+
+                    Button("Save") {
+                        Keychain.set(value, for: templateID, slot: slot)
+                        stored = Keychain.has(templateID, slot: slot)
+                        ToastCenter.shared.show(
+                            stored ? "\(slot.label) saved" : "\(slot.label) cleared",
+                            detail: "Stored in your macOS Keychain"
+                        )
+                    }
+                    .controlSize(.small)
+                    .disabled(value.isEmpty && !stored)
+                }
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: stored ? "checkmark.shield.fill" : "exclamationmark.shield")
+                    .font(.caption)
+                    .foregroundStyle(stored ? Color.green : Color.orange)
+                Text(
+                    stored
+                        ? "Stored in the Keychain."
+                        : "Not set yet."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if let footer {
+                    Text("· \(footer)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onAppear {
+            stored = Keychain.has(templateID, slot: slot)
+            value = ""
+        }
+        .onChange(of: templateID) { _, _ in
+            stored = Keychain.has(templateID, slot: slot)
+            value = ""
+            revealed = false
+        }
+    }
+}
+
+/// Inline warning / info banner used across the editor and build sheet.
+struct NoticeBanner: View {
+    enum Kind {
+        case info, warning, error, success
+
+        var symbol: String {
+            switch self {
+            case .info: return "info.circle.fill"
+            case .warning: return "exclamationmark.triangle.fill"
+            case .error: return "xmark.octagon.fill"
+            case .success: return "checkmark.circle.fill"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .info: return .blue
+            case .warning: return .orange
+            case .error: return .red
+            case .success: return .green
+            }
+        }
+    }
+
+    let kind: Kind
+    let title: String
+    var messages: [String] = []
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind.color)
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                ForEach(messages, id: \.self) { message in
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(kind.color.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(kind.color.opacity(0.25), lineWidth: 1)
+        )
+    }
+}
+
+/// Empty-state placeholder with an optional call to action.
+struct EmptyStateView<Action: View>: View {
+    let symbol: String
+    let title: String
+    let message: String
+    @ViewBuilder var action: Action
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 38))
+                .foregroundStyle(.tertiary)
+            Text(title)
+                .font(.title3.weight(.medium))
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+            action
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(30)
+    }
+}
+
+extension EmptyStateView where Action == EmptyView {
+    init(symbol: String, title: String, message: String) {
+        self.init(symbol: symbol, title: title, message: message) { EmptyView() }
+    }
+}
+
+extension UTType {
+    static let diskImage = UTType("public.disk-image") ?? .data
+    static let iso = UTType(filenameExtension: "iso") ?? .diskImage
+    static let wim = UTType(filenameExtension: "wim") ?? .data
+}
