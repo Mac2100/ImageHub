@@ -523,6 +523,20 @@ struct SystemTab: View {
             }
 
             Section {
+                PathField(
+                    label: "Driver folder",
+                    path: $draft.system.driversPath,
+                    prompt: "None — Windows' built-in drivers only",
+                    directories: true
+                )
+                SectionCaption(
+                    text: "Extract the vendor's driver pack (Lenovo, Dell, HP all publish one per model) and point this at the folder. It's copied onto the drive and installed with pnputil before provisioning touches the network — which is what makes Wi-Fi work on a machine whose wireless chipset Windows has no driver for. Without it the machine comes up Ethernet-only and every winget app fails for want of internet."
+                )
+            } header: {
+                Text("Drivers")
+            }
+
+            Section {
                 TextField("Organisation name", text: $draft.system.organizationName)
                 PathField(
                     label: "Logo",

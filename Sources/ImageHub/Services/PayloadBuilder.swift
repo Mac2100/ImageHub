@@ -209,6 +209,27 @@ enum PayloadBuilder {
         let startLayout = try copyAsset(template.system.startLayoutPath, as: "StartLayout")
         let logo = try copyAsset(template.system.logoPath, as: "Logo")
 
+        // 3b. Driver pack. Copied wholesale (INFs need their .cat and .sys
+        // siblings), and installed by Provision.ps1 before the network step.
+        let driversSource = template.system.driversPath
+        if !driversSource.isEmpty {
+            let origin = URL(fileURLWithPath: driversSource, isDirectory: true)
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: origin.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                let destination = root.appendingPathComponent("Drivers", isDirectory: true)
+                let plan = try FileCopier.plan(directory: origin)
+                let infs = plan.items.filter { $0.relativePath.lowercased().hasSuffix(".inf") }.count
+                log("Copying \(plan.fileCount) driver files (\(plan.totalBytes.byteSize), \(infs) INF\(infs == 1 ? "" : "s"))…")
+                try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+                try FileCopier.copy(plan: plan, to: destination, progress: { _, _ in }, isCancelled: { false })
+                if infs == 0 {
+                    log("⚠︎ No .inf files in the driver folder — pnputil will have nothing to install.")
+                }
+            } else {
+                log("⚠︎ Driver folder not found, skipping: \(driversSource)")
+            }
+        }
+
         // 4. Custom scripts.
         var scripts: [Config.Script] = []
         let scriptsDirectory = root.appendingPathComponent("Scripts", isDirectory: true)

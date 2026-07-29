@@ -34,5 +34,41 @@ if not exist "%PS1%" (
   exit /b 0
 )
 
+REM FirstLogonCommands runs with the logged-on user's *filtered* token, so even
+REM though ITAdmin is an administrator, privileges like SeRestorePrivilege are
+REM stripped. Loading C:\Users\Default\NTUSER.DAT then fails with "Attempted to
+REM perform an unauthorized operation" and every default-user setting is lost.
+REM
+REM A scheduled task registered for the current user with /rl HIGHEST runs with
+REM the full token and *no* UAC prompt, and still runs inside the interactive
+REM session -- which matters, because the splash screen has to be visible. Running
+REM it as SYSTEM would elevate too, but land in session 0 where nobody sees it.
+set "TASK=ImageHubProvision"
+set "CMD=powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"%PS1%\""
+
+schtasks /create /tn "%TASK%" /tr "%CMD%" /sc ONCE /st 00:00 /rl HIGHEST /f >nul 2>&1
+if errorlevel 1 goto :direct
+
+schtasks /run /tn "%TASK%" >nul 2>&1
+if errorlevel 1 (
+  schtasks /delete /tn "%TASK%" /f >nul 2>&1
+  goto :direct
+)
+
+REM Wait for it to finish. Status is "Running" while it works; anything else means
+REM it has stopped. No overall cap: provisioning legitimately takes 10-40 minutes
+REM and the individual steps have their own timeouts.
+:wait
+timeout /t 10 /nobreak >nul 2>&1
+schtasks /query /tn "%TASK%" /fo LIST 2>nul | find "Running" >nul 2>&1
+if not errorlevel 1 goto :wait
+
+schtasks /delete /tn "%TASK%" /f >nul 2>&1
+exit /b 0
+
+:direct
+REM Elevation was unavailable, so run it directly and let Provision.ps1 report
+REM which steps it could not complete rather than silently skipping them.
+echo Could not register the elevated task; running provisioning directly.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
 exit /b %errorlevel%

@@ -458,6 +458,14 @@ struct SystemSpec: Codable, Equatable, Hashable {
     /// information, which surfaces in Settings → About.
     var organizationName: String = ""
     var logoPath: String = ""
+
+    /// A folder of extracted vendor drivers (INFs, with subfolders) copied onto
+    /// the drive and installed with pnputil before provisioning touches the
+    /// network. Windows' stock image has no driver for a lot of current wireless
+    /// chipsets, and without one the machine has no Wi-Fi adapter at all -- the
+    /// profile applies to hardware that doesn't exist and every winget install
+    /// then fails for want of internet.
+    var driversPath: String = ""
     var supportPhone: String = ""
     var supportURL: String = ""
     /// Replaces the bare PowerShell console during provisioning with a
@@ -591,6 +599,7 @@ struct SystemSpec: Codable, Equatable, Hashable {
         startLayoutPath = c.v(.startLayoutPath, "")
         organizationName = c.v(.organizationName, "")
         logoPath = c.v(.logoPath, "")
+        driversPath = c.v(.driversPath, "")
         supportPhone = c.v(.supportPhone, "")
         supportURL = c.v(.supportURL, "")
         showProvisioningScreen = c.v(.showProvisioningScreen, true)
@@ -902,6 +911,17 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
                 "This template wipes every disk in the target machine, including secondary data drives.",
                 .disk
             )
+        }
+        if enabledApps.contains(where: { $0.source == .winget })
+            && system.wifi.enabled && system.driversPath.isEmpty {
+            add(
+                "Wi-Fi is configured but no driver folder is set. Windows has no driver for many current wireless chipsets, so the machine may come up with no Wi-Fi adapter and every winget app will fail. Add the vendor's driver pack under Configuration → Drivers.",
+                .system
+            )
+        }
+        if !system.driversPath.isEmpty
+            && !FileManager.default.fileExists(atPath: system.driversPath) {
+            add("The driver folder is missing: \(system.driversPath)", .system)
         }
         if enabledApps.contains(where: { $0.source == .winget }) && !system.wifi.enabled {
             add(

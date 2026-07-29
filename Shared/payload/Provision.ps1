@@ -227,6 +227,22 @@ if (Get-Setting $System 'showProvisioningScreen' $true) {
 #    and it is installed here.
 # ---------------------------------------------------------------------------
 
+# Say plainly whether this run has the privileges it needs. Half the settings
+# here write to HKLM or load the default user hive, and without elevation they
+# fail one by one with "Attempted to perform an unauthorized operation" -- which
+# is what happened on a real machine when FirstLogonCommands handed provisioning
+# a filtered admin token.
+$identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+$script:IsElevated = $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($script:IsElevated) {
+    Write-Log -Level OK -Message "Running elevated as $($identity.Identity.Name)."
+} else {
+    Write-Log -Level WARN -Message ("Not elevated (running as $($identity.Identity.Name)). " +
+        "Settings that write to HKLM or the default user profile will fail. " +
+        "Launch.cmd normally registers an elevated scheduled task for this.")
+    $script:Warnings += 'Provisioning ran without administrator rights, so machine-wide settings were skipped.'
+}
+
 $driverRoot = Join-Path $PayloadRoot 'Drivers'
 if (Test-Path -LiteralPath $driverRoot) {
     $infCount = @(Get-ChildItem -LiteralPath $driverRoot -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
