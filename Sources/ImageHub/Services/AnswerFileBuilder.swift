@@ -118,10 +118,6 @@ struct AnswerFileBuilder {
                       <Label>System</Label>
                       <Format>FAT32</Format>
                     </ModifyPartition>
-                    <ModifyPartition wcm:action="add">
-                      <Order>2</Order>
-                      <PartitionID>2</PartitionID>
-                    </ModifyPartition>
                 """
 
             // Windows takes the rest of the disk. Setup carves the WinRE
@@ -138,10 +134,9 @@ struct AnswerFileBuilder {
             modifications += """
 
                     <ModifyPartition wcm:action="add">
-                      <Order>3</Order>
+                      <Order>2</Order>
                       <PartitionID>3</PartitionID>
                       <Label>Windows</Label>
-                      <Letter>C</Letter>
                       <Format>NTFS</Format>
                     </ModifyPartition>
                 """
