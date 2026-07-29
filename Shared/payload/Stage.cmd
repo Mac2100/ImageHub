@@ -1,0 +1,33 @@
+@echo off
+REM Copies the ImageHub payload from the boot media to C:\ImageHub during Setup's
+REM specialize pass, so provisioning keeps working after the drive is unplugged.
+REM
+REM This exists because RunSynchronousCommand/Path is capped at 259 characters.
+REM The staging logic used to be an inline PowerShell one-liner in the answer
+REM file; at 324 characters Windows rejected the entire unattend file with
+REM "Value is invalid" (0x80220005) *after* the image was applied, which left the
+REM machine looping on "The computer restarted unexpectedly".
+REM
+REM %~dp0 is this script's own folder — i.e. <media>\ImageHub\ — so the drive
+REM letter never has to be guessed. The answer file only has to be short enough
+REM to find and call this.
+
+setlocal
+set "SRC=%~dp0"
+set "DEST=C:\ImageHub"
+
+if not exist "%DEST%" mkdir "%DEST%"
+
+REM /E all subdirectories including empty, /I assume dir, /Y overwrite,
+REM /Q quiet, /H include hidden. Exclude this script copying over itself.
+xcopy "%SRC%*" "%DEST%\" /E /I /Y /Q /H >"%DEST%\stage.log" 2>&1
+
+if errorlevel 1 (
+  echo xcopy returned %errorlevel% >>"%DEST%\stage.log"
+) else (
+  echo Staged payload from %SRC% >>"%DEST%\stage.log"
+)
+
+REM Never fail the Setup pass: a missing payload is recoverable by hand, a failed
+REM specialize command is not.
+exit /b 0

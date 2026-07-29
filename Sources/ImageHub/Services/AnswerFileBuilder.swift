@@ -352,14 +352,18 @@ struct AnswerFileBuilder {
 
     /// Copies `<usb>\ImageHub` to `C:\ImageHub`. The drive letter of the USB
     /// stick is unknowable ahead of time, so the payload is found by marker file.
+    /// `RunSynchronousCommand/Path` is capped at 259 characters. The inline
+    /// PowerShell that used to live here came to 324, so Windows rejected the
+    /// *entire* unattend file at oobeSystem — "Value is invalid", 0x80220005 —
+    /// after the image had already been applied, leaving the machine in the
+    /// "computer restarted unexpectedly" loop.
+    ///
+    /// The scan still has to happen at runtime (the media's drive letter isn't
+    /// knowable at build time), so it moved into `Stage.cmd` on the media and
+    /// this is just short enough to find and call it.
     private var stagePayloadCommand: String {
-        let script = """
-            $src = Get-PSDrive -PSProvider FileSystem | \
-            ForEach-Object { Join-Path $_.Root 'ImageHub' } | \
-            Where-Object { Test-Path (Join-Path $_ 'Provision.ps1') } | Select-Object -First 1; \
-            if ($src) { Copy-Item -LiteralPath $src -Destination 'C:\\ImageHub' -Recurse -Force }
-            """
-        return powershellCommand(script)
+        "cmd /c for %d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do "
+            + #"@if exist %d:\ImageHub\Stage.cmd call %d:\ImageHub\Stage.cmd"#
     }
 
     private func specializeScriptCommand(_ script: CustomScript) -> String {

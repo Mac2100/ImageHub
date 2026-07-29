@@ -206,6 +206,36 @@ jobs:
           print("answer file element order is valid for every checked component")
           PY
 
+          # RunSynchronousCommand/Path is capped at 259 characters. Exceeding it
+          # makes Windows reject the WHOLE unattend file -- and it does so at
+          # oobeSystem, after the image is applied, so the machine ends up in a
+          # "computer restarted unexpectedly" loop rather than failing early.
+          # An inline PowerShell one-liner hit 324 characters and shipped.
+          python3 - <<'PY2'
+          import sys, xml.etree.ElementTree as ET
+          NS = {'u': 'urn:schemas-microsoft-com:unattend'}
+          LIMIT = 259
+          bad = []
+          for path in ET.parse('/tmp/autounattend.xml').getroot().iter():
+              tag = path.tag.split('}')[-1]
+              if tag in ('Path', 'CommandLine') and (path.text or ''):
+                  n = len(path.text.strip())
+                  if n > LIMIT:
+                      bad.append(f"<{tag}> is {n} chars (limit {LIMIT}): "
+                                 f"{path.text.strip()[:80]}...")
+          for line in bad:
+              print(f"::error::{line}")
+          if bad:
+              sys.exit(1)
+          print("all command paths are within the 259-character limit")
+          PY2
+
+          # Stage.cmd does the payload staging the answer file used to inline.
+          grep -q "Stage.cmd" /tmp/autounattend.xml \
+            || { echo "::error::answer file never calls Stage.cmd"; exit 1; }
+          test -f Shared/payload/Stage.cmd \
+            || { echo "::error::Shared/payload/Stage.cmd is missing"; exit 1; }
+
           # The payload config is what Provision.ps1 parses.
           "$BIN" --emit-payload-config > /tmp/config.json
           python3 -c "import json,sys; json.load(open('/tmp/config.json'))"
