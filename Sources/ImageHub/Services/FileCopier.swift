@@ -177,6 +177,20 @@ enum FileCopier {
             )
         }
 
+        // FAT32 caps a single file at 4 GiB and the write simply fails partway,
+        // which surfaced as Cocoa's "The file couldn't be saved." — a message that
+        // says nothing about the file, the size, or the reason.
+        if total >= 4_294_967_296 {
+            try? fm.removeItem(at: destination)
+            throw CopyError(
+                message: """
+                    \(source.lastPathComponent) is \(total.byteSize), over FAT32's 4 GB \
+                    per-file limit, so it cannot be written to Windows install media. \
+                    (install.wim is the one exception — it gets split into .swm parts.)
+                    """
+            )
+        }
+
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
         let output = try FileHandle(forWritingTo: destination)

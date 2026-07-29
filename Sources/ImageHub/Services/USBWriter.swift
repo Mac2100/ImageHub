@@ -28,6 +28,7 @@ enum USBWriter {
     ) async {
         job.phase = .running
         job.startedAt = Date()
+        let fm = FileManager.default
 
         let log: @Sendable (String) -> Void = { line in
             // Stamped here, not after the hop, so the log stays in the order
@@ -60,6 +61,45 @@ enum USBWriter {
             for warning in template.validationWarnings {
                 job.append("⚠︎ \(warning)")
             }
+            // Driver packs are checked here, before the drive is erased. A pack
+            // pointed at the wrong folder cost a whole build: it was aimed at a
+            // directory holding the 8.47 GB Windows ISO, so the log read "8 files,
+            // 8.58 GB, 0 INFs" and then the copy died on FAT32's 4 GB per-file
+            // limit with "The file couldn't be saved." Two minutes of copying and
+            // a wiped drive for a mistake visible in advance.
+            for pack in template.system.driverPacks where pack.enabled && !pack.path.isEmpty {
+                let origin = URL(fileURLWithPath: pack.path, isDirectory: true)
+                guard fm.fileExists(atPath: origin.path) else { continue }
+                let plan = try FileCopier.plan(directory: origin)
+                let infs = plan.items.filter { $0.relativePath.lowercased().hasSuffix(".inf") }.count
+                if let tooBig = plan.items.first(where: { $0.size >= WindowsImage.fat32FileLimit }) {
+                    throw WriteError(
+                        message: """
+                            Driver pack “\(pack.displayName)” contains \
+                            \((tooBig.relativePath as NSString).lastPathComponent) at \
+                            \(tooBig.size.byteSize), which is over FAT32's 4 GB per-file limit and \
+                            cannot go on Windows install media. This folder holds \
+                            \(plan.fileCount) file\(plan.fileCount == 1 ? "" : "s") and \(infs) \
+                            INF\(infs == 1 ? "" : "s") — it looks like the wrong folder. Point it at \
+                            the *extracted* driver files.
+                            """
+                    )
+                }
+                if infs == 0 {
+                    throw WriteError(
+                        message: """
+                            Driver pack “\(pack.displayName)” has no .inf files in \
+                            \(pack.path) — \(plan.fileCount) file\(plan.fileCount == 1 ? "" : "s"), \
+                            \(plan.totalBytes.byteSize). Drivers are installed from .inf files, so \
+                            there is nothing here to install. Vendor packs are often a self-extracting \
+                            archive: run it, or expand it, and point this at the folder that contains \
+                            the .inf files. Disable the pack to build without it.
+                            """
+                    )
+                }
+                job.append("Driver pack “\(pack.displayName)”: \(infs) INF\(infs == 1 ? "" : "s"), \(plan.totalBytes.byteSize) [\(pack.scopeSummary)]")
+            }
+
             job.finish(.validate)
             try checkCancelled(job)
 
