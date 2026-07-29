@@ -41,6 +41,16 @@ enum FileCopier {
         "System Volume Information"
     ]
 
+    /// macOS AppleDouble sidecars — `._foo.inf` beside `foo.inf` — holding
+    /// resource forks and extended attributes for filesystems that can't store
+    /// them. They are meaningless to Windows and actively harmful on install
+    /// media: Setup enumerates `Sources\Migration\WTR\*.inf`, finds
+    /// `._adminpack_en-us.inf`, tries to parse an AppleDouble blob as an INF, and
+    /// its OS-analysis service fails. Seen on a real build's setuperr.log.
+    private static func isAppleDouble(_ name: String) -> Bool {
+        name.hasPrefix("._")
+    }
+
     /// Walks `directory` and totals up what needs copying.
     /// `excluding` holds lower-cased relative paths (e.g. `sources/install.wim`).
     nonisolated static func plan(
@@ -64,7 +74,7 @@ enum FileCopier {
 
         for case let url as URL in enumerator {
             let name = url.lastPathComponent
-            if alwaysSkip.contains(name) {
+            if alwaysSkip.contains(name) || isAppleDouble(name) {
                 enumerator.skipDescendants()
                 continue
             }

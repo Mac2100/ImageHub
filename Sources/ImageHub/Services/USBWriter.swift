@@ -353,6 +353,21 @@ enum USBWriter {
             job.append("⚠︎ No efi/boot/bootx64.efi — this media will only boot in legacy BIOS mode.")
         }
 
+        // AppleDouble sidecars break Setup's OS-analysis service, so sweep any
+        // that reached the volume by another route (Finder, Spotlight, a copy
+        // that didn't go through FileCopier) rather than trusting the skip list.
+        var sidecars = 0
+        if let walker = fm.enumerator(atPath: volume.path) {
+            for case let path as String in walker
+            where (path as NSString).lastPathComponent.hasPrefix("._") {
+                try? fm.removeItem(at: volume.appendingPathComponent(path))
+                sidecars += 1
+            }
+        }
+        if sidecars > 0 {
+            job.append("Removed \(sidecars) macOS “._” sidecar file\(sidecars == 1 ? "" : "s") — Windows Setup can't parse them.")
+        }
+
         guard missing.isEmpty else {
             throw WriteError(
                 message: "The finished drive is missing: \(missing.joined(separator: ", "))"
