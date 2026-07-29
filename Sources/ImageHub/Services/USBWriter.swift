@@ -71,10 +71,17 @@ enum USBWriter {
             // 3 — Erase ---------------------------------------------------------
             job.begin(.erase, "Wiping \(drive.displayName)")
             let label = UserDefaults.standard.string(forKey: "defaultVolumeLabel") ?? "IMAGEHUB"
+            // The media is always MBR, regardless of the template's partition
+            // style — that setting describes the *target* disk's layout, not the
+            // stick's. GPTFormat makes macOS add an EFI System Partition to the
+            // media, and Windows Setup then has two System partitions to choose
+            // between, picks the removable one, and fails to service boot files
+            // ("BFSVC: Failed to get system partition", 0x80073B92). MBR media
+            // has no ESP and still boots UEFI, since firmware only needs FAT.
             try await DiskService.eraseToFAT32(
                 drive: drive,
                 label: label,
-                scheme: template.disk.partitionStyle,
+                scheme: .mbr,
                 log: log
             )
             let volume = try await DiskService.waitForVolume(onDisk: drive.id)
