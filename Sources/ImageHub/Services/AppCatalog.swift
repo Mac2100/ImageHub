@@ -62,7 +62,63 @@ enum AppCatalog {
         // Security
         Entry(id: "Bitwarden.Bitwarden", name: "Bitwarden", category: "Security"),
         Entry(id: "1Password.1Password", name: "1Password", category: "Security"),
-        Entry(id: "Malwarebytes.Malwarebytes", name: "Malwarebytes", category: "Security")
+        Entry(id: "Malwarebytes.Malwarebytes", name: "Malwarebytes", category: "Security"),
+        Entry(id: "KeePassXCTeam.KeePassXC", name: "KeePassXC", category: "Security"),
+        Entry(id: "Cisco.Secure-Client", name: "Cisco Secure Client", category: "Security",
+              note: "AnyConnect VPN"),
+        Entry(id: "OpenVPNTechnologies.OpenVPNConnect", name: "OpenVPN Connect", category: "Security"),
+        Entry(id: "WireGuard.WireGuard", name: "WireGuard", category: "Security"),
+
+        // Productivity
+        Entry(id: "Google.GoogleDrive", name: "Google Drive", category: "Productivity"),
+        Entry(id: "Dropbox.Dropbox", name: "Dropbox", category: "Productivity"),
+        Entry(id: "Adobe.Acrobat.Reader.32-bit", name: "Acrobat Reader (32-bit)", category: "Productivity"),
+        Entry(id: "Foxit.FoxitReader", name: "Foxit PDF Reader", category: "Productivity"),
+        Entry(id: "Microsoft.OneNote", name: "OneNote", category: "Productivity"),
+        Entry(id: "Mozilla.Thunderbird", name: "Thunderbird", category: "Productivity"),
+
+        // Communication
+        Entry(id: "Microsoft.Skype", name: "Skype", category: "Communication"),
+        Entry(id: "Cisco.Webex", name: "Webex", category: "Communication"),
+        Entry(id: "GoTo.GoToMeeting", name: "GoTo Meeting", category: "Communication"),
+        Entry(id: "RingCentral.RingCentral", name: "RingCentral", category: "Communication"),
+        Entry(id: "Discord.Discord", name: "Discord", category: "Communication"),
+
+        // Utilities
+        Entry(id: "Rufus.Rufus", name: "Rufus", category: "Utilities",
+              note: "Makes bootable USB media on Windows"),
+        Entry(id: "Greenshot.Greenshot", name: "Greenshot", category: "Utilities"),
+        Entry(id: "ShareX.ShareX", name: "ShareX", category: "Utilities"),
+        Entry(id: "WinSCP.WinSCP", name: "WinSCP", category: "Utilities"),
+        Entry(id: "FileZilla.Client", name: "FileZilla", category: "Utilities"),
+        Entry(id: "Balena.Etcher", name: "balenaEtcher", category: "Utilities"),
+        Entry(id: "CPUID.CPU-Z", name: "CPU-Z", category: "Utilities"),
+        Entry(id: "TechPowerUp.GPU-Z", name: "GPU-Z", category: "Utilities"),
+        Entry(id: "Piriform.CCleaner", name: "CCleaner", category: "Utilities"),
+        Entry(id: "Microsoft.Sysinternals.Suite", name: "Sysinternals Suite", category: "Utilities",
+              note: "Autoruns, Process Explorer, PsExec and the rest"),
+
+        // Remote support
+        Entry(id: "Splashtop.SplashtopBusiness", name: "Splashtop Business", category: "Remote support"),
+        Entry(id: "Google.ChromeRemoteDesktop", name: "Chrome Remote Desktop", category: "Remote support"),
+        Entry(id: "Microsoft.RemoteDesktopClient", name: "Remote Desktop client", category: "Remote support"),
+
+        // Runtimes
+        Entry(id: "Microsoft.VCRedist.2013.x64", name: "VC++ 2013 Redistributable", category: "Runtimes"),
+        Entry(id: "Microsoft.DotNet.Runtime.8", name: ".NET 8 Runtime", category: "Runtimes"),
+        Entry(id: "Microsoft.DotNet.Framework.DeveloperPack_4", name: ".NET Framework 4", category: "Runtimes"),
+        Entry(id: "Adoptium.Temurin.21.JRE", name: "Temurin 21 JRE", category: "Runtimes",
+              note: "Open-source Java, no Oracle licensing"),
+
+        // Developer
+        Entry(id: "Microsoft.PowerShell", name: "PowerShell 7", category: "Developer"),
+        Entry(id: "Microsoft.SQLServerManagementStudio", name: "SQL Server Management Studio", category: "Developer"),
+        Entry(id: "WinMerge.WinMerge", name: "WinMerge", category: "Developer"),
+        Entry(id: "Postman.Postman", name: "Postman", category: "Developer"),
+        Entry(id: "Docker.DockerDesktop", name: "Docker Desktop", category: "Developer"),
+        Entry(id: "GitHub.GitHubDesktop", name: "GitHub Desktop", category: "Developer"),
+        Entry(id: "Insecure.Nmap", name: "Nmap", category: "Developer"),
+        Entry(id: "WiresharkFoundation.Wireshark", name: "Wireshark", category: "Developer")
     ]
 
     static var categories: [String] {

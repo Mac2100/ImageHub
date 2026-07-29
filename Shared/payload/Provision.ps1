@@ -627,7 +627,14 @@ if ($apps.Count -gt 0) {
 
                     # winget uses 0 for success and 0x8A150061 for "already installed".
                     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335135) {
-                        throw "winget exited with $LASTEXITCODE"
+                        # The exit code alone says nothing useful. winget's own last
+                        # lines usually name the reason outright -- an unaccepted
+                        # agreement, no applicable installer for this architecture,
+                        # a hash mismatch, a network failure -- so surface them
+                        # instead of making someone open the log to find out.
+                        $reason = @($output | Where-Object { "$_".Trim() } | Select-Object -Last 3)
+                        $detail = if ($reason) { ' - ' + ($reason -join ' / ') } else { '' }
+                        throw "winget exited with $LASTEXITCODE$detail"
                     }
                     Write-Log -Level OK -Message "$name installed."
                 }

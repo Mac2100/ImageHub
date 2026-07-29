@@ -159,26 +159,35 @@ struct AppRow: View {
                         .help("This entry is incomplete and will be skipped.")
                 }
 
+                // A bare Image in a borderless button is only as clickable as the
+                // glyph — about 10pt — and the row's double-tap gesture competes
+                // with it, so single clicks were being missed. An explicit frame
+                // plus contentShape gives each one a real 28pt target.
                 Button {
                     onToggleExpand()
                 } label: {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.caption)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
+                .help(isExpanded ? "Collapse" : "Expand")
 
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
                     Image(systemName: "trash")
                         .font(.caption)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.borderless)
+                .help("Remove")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, perform: onToggleExpand)
 
             if isExpanded {
                 detail
