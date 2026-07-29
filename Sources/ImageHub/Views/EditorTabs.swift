@@ -884,17 +884,26 @@ struct DriverPackEditor: View {
             }
 
             ForEach($packs) { $pack in
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
+                    // Every field here is labelsHidden with an explicit caption
+                    // above it. A bare TextField inside a Form turns its
+                    // placeholder into a full-width left-hand label, which left
+                    // the actual inputs almost invisible.
                     HStack(spacing: 8) {
                         Toggle("", isOn: $pack.enabled)
                             .labelsHidden()
                             .help("Include this pack on the drive")
-                        TextField("Name (e.g. ThinkPad T14 Gen 4)", text: $pack.name)
+
+                        TextField("", text: $pack.name, prompt: Text("Pack name, e.g. ThinkPad T14 Gen 4"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+
                         Chip(
                             text: pack.scopeSummary,
                             symbol: pack.appliesEverywhere ? "globe" : "desktopcomputer",
                             tint: pack.appliesEverywhere ? .blue : .secondary
                         )
+
                         Button(role: .destructive) {
                             packs.removeAll { $0.id == pack.id }
                         } label: {
@@ -903,20 +912,48 @@ struct DriverPackEditor: View {
                         .buttonStyle(.borderless)
                     }
 
-                    PathField(
-                        label: "Folder",
-                        path: $pack.path,
-                        prompt: "Extracted driver folder",
-                        directories: true
-                    )
-
                     HStack(spacing: 8) {
-                        TextField("Manufacturer contains (blank = any)", text: $pack.manufacturerMatch)
-                        TextField("Model contains (blank = any)", text: $pack.modelMatch)
+                        Text("Folder")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 88, alignment: .leading)
+                        Text(pack.path.isEmpty ? "Not set" : (pack.path as NSString).lastPathComponent)
+                            .font(.caption)
+                            .foregroundStyle(pack.path.isEmpty ? .tertiary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(pack.path)
+                        Spacer(minLength: 4)
+                        Button("Choose…") {
+                            if let url = Panels.chooseFile(title: "Choose the extracted driver folder", directories: true) {
+                                pack.path = url.path
+                            }
+                        }
+                        .controlSize(.small)
                     }
-                    .autocorrectionDisabled()
+
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Manufacturer contains")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextField("", text: $pack.manufacturerMatch, prompt: Text("any"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Model contains")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TextField("", text: $pack.modelMatch, prompt: Text("any"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .autocorrectionDisabled()
+                        }
+                    }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
                 .opacity(pack.enabled ? 1 : 0.5)
                 Divider()
             }
