@@ -243,18 +243,64 @@ if ($script:IsElevated) {
     $script:Warnings += 'Provisioning ran without administrator rights, so machine-wide settings were skipped.'
 }
 
-$driverRoot = Join-Path $PayloadRoot 'Drivers'
-if (Test-Path -LiteralPath $driverRoot) {
-    $infCount = @(Get-ChildItem -LiteralPath $driverRoot -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
-    if ($infCount -gt 0) {
-        Set-Status -Step 'Installing drivers...'
-        Invoke-Step "Installing $infCount driver package(s)" {
-            $output = & pnputil.exe /add-driver (Join-Path $driverRoot '*.inf') /subdirs /install 2>&1
+# Only the packs that match this machine get installed. A mixed fleet means the
+# drive carries several, and pushing a Dell pack at a Lenovo wastes minutes and
+# can install the wrong storage or network driver.
+$driverPacks = @(Get-Setting $System 'driverPacks' @())
+if ($driverPacks.Count -gt 0) {
+    $csInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $manufacturer = if ($csInfo) { [string]$csInfo.Manufacturer } else { '' }
+    $model = if ($csInfo) { [string]$csInfo.Model } else { '' }
+    Write-Log "Hardware reports manufacturer '$manufacturer', model '$model'."
+
+    function Test-DriverMatch {
+        param([string]$Pattern, [string]$Value)
+        # Empty pattern means "any". Substring, case-insensitive: vendors pad these
+        # strings differently per SKU and an exact match would almost never hit.
+        if ([string]::IsNullOrWhiteSpace($Pattern)) { return $true }
+        if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+        return $Value.ToLowerInvariant().Contains($Pattern.Trim().ToLowerInvariant())
+    }
+
+    $matched = @($driverPacks | Where-Object {
+        (Test-DriverMatch (Get-Setting $_ 'manufacturerMatch' '') $manufacturer) -and
+        (Test-DriverMatch (Get-Setting $_ 'modelMatch' '') $model)
+    })
+
+    foreach ($skipped in @($driverPacks | Where-Object { $matched -notcontains $_ })) {
+        Write-Log "  Skipping driver pack '$(Get-Setting $skipped 'name' 'unnamed')' - does not match this hardware."
+    }
+
+    if ($matched.Count -eq 0) {
+        Write-Log -Level WARN -Message ("The drive carries $($driverPacks.Count) driver pack(s) but none match " +
+            "'$manufacturer' / '$model'. Check the manufacturer and model filters on the template.")
+        $script:Warnings += "No driver pack matched this hardware ($manufacturer $model)."
+    }
+
+    foreach ($pack in $matched) {
+        $packName = Get-Setting $pack 'name' 'Drivers'
+        $relative = Get-Setting $pack 'relativePath' ''
+        if (-not $relative) { continue }
+        $folder = Join-Path $PayloadRoot $relative
+        if (-not (Test-Path -LiteralPath $folder)) {
+            Write-Log -Level WARN -Message "Driver pack '$packName' is listed but $folder is not on the drive."
+            continue
+        }
+        $infs = @(Get-ChildItem -LiteralPath $folder -Recurse -Filter *.inf -ErrorAction SilentlyContinue)
+        if ($infs.Count -eq 0) {
+            Write-Log -Level WARN -Message "Driver pack '$packName' contains no .inf files."
+            continue
+        }
+
+        Set-Status -Step "Installing drivers ($packName)..."
+        Invoke-Step "Installing driver pack '$packName' ($($infs.Count) INFs)" {
+            $output = & pnputil.exe /add-driver (Join-Path $folder '*.inf') /subdirs /install 2>&1
             $output | ForEach-Object { if ($_) { Write-Log "  $_" } }
-            # pnputil returns non-zero when *some* packages are skipped, which is
-            # normal for a mixed pack, so the INF count is what gets reported.
-            $added = @($output | Select-String -SimpleMatch 'successfully' -ErrorAction SilentlyContinue).Count
-            Write-Log -Level OK -Message "pnputil processed the driver folder ($added success line(s))."
+            # pnputil exits non-zero when any single package is skipped, which is
+            # normal for a model-wide pack on one machine, so a non-zero code is
+            # not treated as failure. The added/failed counts it prints are.
+            $added = @($output | Where-Object { $_ -match 'successfully' }).Count
+            Write-Log -Level OK -Message "$packName processed ($added success line(s) from pnputil)."
         }
     }
 }

@@ -523,15 +523,7 @@ struct SystemTab: View {
             }
 
             Section {
-                PathField(
-                    label: "Driver folder",
-                    path: $draft.system.driversPath,
-                    prompt: "None — Windows' built-in drivers only",
-                    directories: true
-                )
-                SectionCaption(
-                    text: "Extract the vendor's driver pack (Lenovo, Dell, HP all publish one per model) and point this at the folder. It's copied onto the drive and installed with pnputil before provisioning touches the network — which is what makes Wi-Fi work on a machine whose wireless chipset Windows has no driver for. Without it the machine comes up Ethernet-only and every winget app fails for want of internet."
-                )
+                DriverPackEditor(packs: $draft.system.driverPacks)
             } header: {
                 Text("Drivers")
             }
@@ -869,5 +861,89 @@ struct SilentSwitchField: View {
     private func sync() {
         preset = SilentSwitchPreset.matching(arguments)
         if preset == .custom { custom = arguments }
+    }
+}
+
+
+/// Driver packs and the hardware each one belongs to.
+///
+/// Shipping every vendor's drivers is not possible — one model's pack is 1–3 GB
+/// and there are hundreds of models. A mixed fleet instead gets a library: add
+/// the packs for the models you own, they all travel on the drive, and each
+/// machine installs only what matches the manufacturer and model Windows reports.
+struct DriverPackEditor: View {
+    @Binding var packs: [DriverPack]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if packs.isEmpty {
+                Text("No driver packs. Windows' built-in drivers will be all the machine has — which on many current laptops means no Wi-Fi adapter at all.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach($packs) { $pack in
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Toggle("", isOn: $pack.enabled)
+                            .labelsHidden()
+                            .help("Include this pack on the drive")
+                        TextField("Name (e.g. ThinkPad T14 Gen 4)", text: $pack.name)
+                        Chip(
+                            text: pack.scopeSummary,
+                            symbol: pack.appliesEverywhere ? "globe" : "desktopcomputer",
+                            tint: pack.appliesEverywhere ? .blue : .secondary
+                        )
+                        Button(role: .destructive) {
+                            packs.removeAll { $0.id == pack.id }
+                        } label: {
+                            Image(systemName: "trash").font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+
+                    PathField(
+                        label: "Folder",
+                        path: $pack.path,
+                        prompt: "Extracted driver folder",
+                        directories: true
+                    )
+
+                    HStack(spacing: 8) {
+                        TextField("Manufacturer contains (blank = any)", text: $pack.manufacturerMatch)
+                        TextField("Model contains (blank = any)", text: $pack.modelMatch)
+                    }
+                    .autocorrectionDisabled()
+                }
+                .padding(.vertical, 4)
+                .opacity(pack.enabled ? 1 : 0.5)
+                Divider()
+            }
+
+            HStack {
+                Button {
+                    packs.append(DriverPack())
+                } label: {
+                    Label("Add pack", systemImage: "plus")
+                }
+                .controlSize(.small)
+
+                Button {
+                    // The single most useful entry for a mixed business fleet:
+                    // Intel's Wi-Fi driver covers most Lenovo/Dell/HP laptops, so
+                    // it is worth installing everywhere rather than per model.
+                    packs.append(DriverPack(name: "Intel Wi-Fi (all machines)"))
+                } label: {
+                    Label("Add an all-hardware pack", systemImage: "globe")
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+
+            SectionCaption(
+                text: "Matching is a case-insensitive substring test against what Windows reports — \"Lenovo\" as manufacturer, \"21F6\" or \"ThinkPad T14\" as model. Leave both blank and the pack installs on every machine, which is what you want for something like Intel's Wi-Fi driver. Packs are installed with pnputil before provisioning touches the network, so Wi-Fi works on a machine Windows has no wireless driver for."
+            )
+        }
     }
 }
