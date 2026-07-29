@@ -353,6 +353,8 @@ struct BuildProgressView: View {
     /// the job happens to publish something — and during a long split that can be
     /// minutes apart, which reads as a stopped clock.
     @State private var now = Date()
+    @State private var celebrating = false
+    @State private var celebrationSeed = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -363,8 +365,26 @@ struct BuildProgressView: View {
             }
         }
         .padding(16)
+        .overlay(alignment: .top) {
+            if celebrating {
+                ConfettiView(seed: celebrationSeed)
+                    .frame(height: 320)
+                    .transition(.opacity)
+            }
+        }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
             if job.isRunning { now = date }
+        }
+        .onChange(of: job.phase) { _, phase in
+            guard phase == .succeeded else { return }
+            celebrationSeed += 1
+            celebrating = true
+            // The burst is ~3s; drop the overlay afterwards so nothing keeps
+            // animating behind the finished view.
+            Task {
+                try? await Task.sleep(nanoseconds: 3_400_000_000)
+                celebrating = false
+            }
         }
     }
 

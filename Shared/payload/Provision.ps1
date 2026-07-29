@@ -219,6 +219,31 @@ if (Get-Setting $System 'showProvisioningScreen' $true) {
 }
 
 # ---------------------------------------------------------------------------
+# 0. Drivers - before the network, because on many machines the Wi-Fi adapter
+#    does not exist until its driver is installed. Windows' stock image has no
+#    driver for a lot of current Lenovo/Dell wireless chipsets, which leaves the
+#    machine with Ethernet only and makes every winget install fail for want of
+#    internet. Drop the vendor's extracted driver pack in <media>\ImageHub\Drivers
+#    and it is installed here.
+# ---------------------------------------------------------------------------
+
+$driverRoot = Join-Path $PayloadRoot 'Drivers'
+if (Test-Path -LiteralPath $driverRoot) {
+    $infCount = @(Get-ChildItem -LiteralPath $driverRoot -Recurse -Filter *.inf -ErrorAction SilentlyContinue).Count
+    if ($infCount -gt 0) {
+        Set-Status -Step 'Installing drivers...'
+        Invoke-Step "Installing $infCount driver package(s)" {
+            $output = & pnputil.exe /add-driver (Join-Path $driverRoot '*.inf') /subdirs /install 2>&1
+            $output | ForEach-Object { if ($_) { Write-Log "  $_" } }
+            # pnputil returns non-zero when *some* packages are skipped, which is
+            # normal for a mixed pack, so the INF count is what gets reported.
+            $added = @($output | Select-String -SimpleMatch 'successfully' -ErrorAction SilentlyContinue).Count
+            Write-Log -Level OK -Message "pnputil processed the driver folder ($added success line(s))."
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 1. Network - first, because everything else may need it
 # ---------------------------------------------------------------------------
 

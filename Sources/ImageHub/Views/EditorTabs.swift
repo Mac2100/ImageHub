@@ -113,7 +113,7 @@ struct AppsTab: View {
         app.source = .installer
         app.installerPath = url.path
         app.name = url.deletingPathExtension().lastPathComponent
-        app.silentArgs = url.pathExtension.lowercased() == "msi" ? "/qn /norestart" : "/S"
+        app.silentArgs = SilentSwitchPreset.suggested(forExtension: url.pathExtension).arguments ?? ""
         draft.apps.append(app)
         selectedID = app.id
     }
@@ -223,10 +223,7 @@ struct AppRow: View {
                 TextField("Pin a version (optional)", text: $app.version)
             case .installer:
                 PathField(label: "Installer", path: $app.installerPath)
-                TextField("Silent switches", text: $app.silentArgs)
-                Text("MSI usually takes “/qn /norestart”; most NSIS installers take “/S”.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                SilentSwitchField(arguments: $app.silentArgs, installerPath: app.installerPath)
             case .script:
                 TextEditor(text: $app.script)
                     .font(.system(size: 11).monospaced())
@@ -796,5 +793,67 @@ struct ScriptCard: View {
         }
         .opacity(script.enabled ? 1 : 0.55)
         .glassCard()
+    }
+}
+
+
+/// Picks silent-install switches from named presets instead of asking the
+/// operator to remember them.
+///
+/// The free-text field this replaces let a template ship `/S` to an installer
+/// that wanted `--quiet`. The installer then showed a modal dialog and the whole
+/// provisioning run stopped on it, which is a lot of consequence for a two-
+/// character mistake with no feedback.
+struct SilentSwitchField: View {
+    @Binding var arguments: String
+    let installerPath: String
+
+    @State private var preset: SilentSwitchPreset = .none
+    @State private var custom: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Silent install", selection: $preset) {
+                ForEach(SilentSwitchPreset.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .onChange(of: preset) { _, new in
+                if let args = new.arguments { arguments = args } else { arguments = custom }
+            }
+
+            if preset == .custom {
+                TextField("Switches", text: $custom)
+                    .autocorrectionDisabled()
+                    .onChange(of: custom) { _, new in arguments = new }
+            }
+
+            HStack(spacing: 6) {
+                Text(preset.detail)
+                if !arguments.isEmpty {
+                    Text(arguments)
+                        .font(.caption.monospaced())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear(perform: sync)
+        .onChange(of: installerPath) { _, _ in
+            // A newly chosen installer gets the guess for its file type, but only
+            // when nothing has been set yet — never clobber a deliberate choice.
+            guard arguments.isEmpty else { return }
+            let ext = (installerPath as NSString).pathExtension
+            preset = SilentSwitchPreset.suggested(forExtension: ext)
+        }
+    }
+
+    private func sync() {
+        preset = SilentSwitchPreset.matching(arguments)
+        if preset == .custom { custom = arguments }
     }
 }

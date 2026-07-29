@@ -680,6 +680,83 @@ enum TemplateField: String, Hashable {
 /// `issues` is recomputed on every view update, so the identity has to come from
 /// the contents rather than a fresh UUID — otherwise `ForEach` treats every row
 /// as new each time and the list flickers.
+/// Ready-made silent-install switches, because the difference between `/S` and
+/// `--quiet` is the difference between an unattended install and a provisioning
+/// run stopped dead on a modal dialog — which is exactly what a real build hit
+/// when Sophos answered `/S` with "Non-option passed: /S".
+enum SilentSwitchPreset: String, CaseIterable, Identifiable, Codable {
+    case msi
+    case nsis
+    case inno
+    case installShield
+    case sophos
+    case quietDouble
+    case silentSingle
+    case none
+    case custom
+
+    var id: String { rawValue }
+
+    /// The switches themselves. `nil` means "leave it to the operator".
+    var arguments: String? {
+        switch self {
+        case .msi: return "/qn /norestart"
+        case .nsis: return "/S"
+        case .inno: return "/VERYSILENT /NORESTART"
+        case .installShield: return #"/s /v"/qn""#
+        case .sophos: return "--quiet"
+        case .quietDouble: return "--quiet"
+        case .silentSingle: return "/silent"
+        case .none: return ""
+        case .custom: return nil
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .msi: return "MSI installer"
+        case .nsis: return "NSIS installer"
+        case .inno: return "Inno Setup"
+        case .installShield: return "InstallShield"
+        case .sophos: return "Sophos"
+        case .quietDouble: return "Modern CLI (--quiet)"
+        case .silentSingle: return "Legacy (/silent)"
+        case .none: return "No switches"
+        case .custom: return "Custom…"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .msi: return "/qn /norestart — msiexec's own silent flags."
+        case .nsis: return "/S — Nullsoft. Common for small open-source tools."
+        case .inno: return "/VERYSILENT /NORESTART — Inno Setup, no progress window."
+        case .installShield: return #"/s /v"/qn" — InstallShield wrapping an MSI."#
+        case .sophos: return "--quiet — what Sophos Endpoint expects; it rejects /S."
+        case .quietDouble: return "--quiet — most installers built on modern CLI conventions."
+        case .silentSingle: return "/silent — older InstallShield and some vendor stubs."
+        case .none: return "Runs the installer as-is. It will show its own UI."
+        case .custom: return "Type the switches yourself."
+        }
+    }
+
+    /// Which preset a given argument string corresponds to, for showing the
+    /// current value in a picker.
+    static func matching(_ arguments: String) -> SilentSwitchPreset {
+        let trimmed = arguments.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return .none }
+        for preset in allCases where preset != .custom && preset != .none {
+            if preset.arguments == trimmed { return preset }
+        }
+        return .custom
+    }
+
+    /// Best guess from the installer's file extension.
+    static func suggested(forExtension ext: String) -> SilentSwitchPreset {
+        ext.lowercased() == "msi" ? .msi : .nsis
+    }
+}
+
 struct ValidationIssue: Identifiable, Hashable {
     let message: String
     let field: TemplateField
