@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     ImageHub first-boot provisioning.
 
@@ -17,7 +17,7 @@
 
 .NOTES
     This file is the shared contract between the macOS app and the Windows
-    builder — both write the same config.json and ship this same script.
+    builder - both write the same config.json and ship this same script.
 #>
 
 [CmdletBinding()]
@@ -201,7 +201,7 @@ if (Get-Setting $System 'showProvisioningScreen' $true) {
         } catch { }
     }
 
-    Set-Status -Step 'Starting setup…'
+    Set-Status -Step 'Starting setup...'
     $splash = Join-Path $Root 'Splash.ps1'
     if (Test-Path -LiteralPath $splash) {
         try {
@@ -219,7 +219,7 @@ if (Get-Setting $System 'showProvisioningScreen' $true) {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Network — first, because everything else may need it
+# 1. Network - first, because everything else may need it
 # ---------------------------------------------------------------------------
 
 $wifi = Get-Setting $System 'wifi'
@@ -413,7 +413,7 @@ if (Get-Setting $System 'allowPing' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Desktop defaults — written into the default user hive so every account
+# 5. Desktop defaults - written into the default user hive so every account
 #    created from here on inherits them
 # ---------------------------------------------------------------------------
 
@@ -584,7 +584,7 @@ if ($apps.Count -gt 0) {
     if ($needsWinget) {
         Write-Log -Level STEP -Message 'Preparing winget'
         if (-not (Wait-ForNetwork -TimeoutSeconds 90)) {
-            Write-Log -Level WARN -Message 'No internet connection detected — winget installs will probably fail.'
+            Write-Log -Level WARN -Message 'No internet connection detected - winget installs will probably fail.'
             $script:Warnings += 'No internet connection was available for winget installs.'
         }
         $winget = Resolve-Winget
@@ -621,7 +621,7 @@ if ($apps.Count -gt 0) {
                     $version = Get-Setting $app 'version' ''
                     if ($version) { $arguments += @('--version', $version) }
 
-                    Write-Log "Installing $name via winget…"
+                    Write-Log "Installing $name via winget..."
                     $output = & $winget @arguments 2>&1
                     $output | ForEach-Object { Add-Content -LiteralPath $LogFile -Value "      $_" }
 
@@ -639,7 +639,7 @@ if ($apps.Count -gt 0) {
                         throw "Installer missing at $installer"
                     }
                     $silentArgs = Get-Setting $app 'silentArgs' ''
-                    Write-Log "Running $([System.IO.Path]::GetFileName($installer)) $silentArgs…"
+                    Write-Log "Running $([System.IO.Path]::GetFileName($installer)) $silentArgs..."
 
                     if ([System.IO.Path]::GetExtension($installer) -ieq '.msi') {
                         $msiArgs = @('/i', "`"$installer`"")
@@ -651,7 +651,7 @@ if ($apps.Count -gt 0) {
                         $process = Start-Process -FilePath $installer -Wait -PassThru
                     }
 
-                    # 3010 means "success, needs a reboot" — not a failure.
+                    # 3010 means "success, needs a reboot" - not a failure.
                     if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
                         throw "Installer exited with $($process.ExitCode)"
                     }
@@ -660,7 +660,7 @@ if ($apps.Count -gt 0) {
                 'script' {
                     $body = Get-Setting $app 'script' ''
                     if (-not $body) { throw 'Script body is empty.' }
-                    Write-Log "Running the PowerShell step for $name…"
+                    Write-Log "Running the PowerShell step for $name..."
                     & ([scriptblock]::Create($body))
                     Write-Log -Level OK -Message "$name completed."
                 }
@@ -722,7 +722,7 @@ if ($wallpaper -or $lockScreen) {
 $organization = Get-Setting $System 'organizationName' ''
 if ($organization -or (Get-Setting $System 'supportPhone' '') -or (Get-Setting $System 'supportURL' '')) {
     Invoke-Step 'Writing OEM support information' {
-        # Shows up in Settings → About and the classic System control panel.
+        # Shows up in Settings -> About and the classic System control panel.
         $oem = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\OEMInformation'
         if ($organization) {
             Set-RegistryValue -Path $oem -Name 'Manufacturer' -Value $organization -Type String
@@ -743,7 +743,7 @@ if ($organization -or (Get-Setting $System 'supportPhone' '') -or (Get-Setting $
                 New-Item -ItemType Directory -Path 'C:\ProgramData\ImageHub\Assets' -Force | Out-Null
                 $target = Join-Path 'C:\ProgramData\ImageHub\Assets' ([System.IO.Path]::GetFileName($source))
                 Copy-Item -LiteralPath $source -Destination $target -Force
-                # Settings → About wants a bitmap; anything else is ignored
+                # Settings -> About wants a bitmap; anything else is ignored
                 # silently, so convert rather than hope.
                 try {
                     Add-Type -AssemblyName System.Drawing
@@ -907,7 +907,7 @@ Recovery key: $($key.RecoveryPassword)
 
 Move this into your key escrow and delete this file.
 "@
-            Write-Log -Level OK -Message "Recovery key written to $keyFile — escrow it and delete the file."
+            Write-Log -Level OK -Message "Recovery key written to $keyFile - escrow it and delete the file."
             $script:Warnings += "A BitLocker recovery key is sitting in $keyFile. Escrow it and delete the file."
 
             if (Get-Setting $System 'bitLockerRecoveryToAD' $false) {
@@ -1079,7 +1079,7 @@ if ($script:SplashProcess) {
 }
 
 if (-not $NoPause -and -not $splashRunning) {
-    Write-Host '  Press any key to close this window…' -ForegroundColor DarkGray
+    Write-Host '  Press any key to close this window...' -ForegroundColor DarkGray
     try {
         $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
     } catch {

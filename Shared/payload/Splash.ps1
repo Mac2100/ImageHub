@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Full-screen branded progress screen shown while ImageHub provisions a machine.
 
@@ -126,7 +126,7 @@ $stepLabel.Location = New-Object System.Drawing.Point(30, 196)
 $stepLabel.TextAlign = 'MiddleCenter'
 $stepLabel.ForeColor = $textMain
 $stepLabel.Font = New-Object System.Drawing.Font('Segoe UI', 12)
-$stepLabel.Text = 'Starting…'
+$stepLabel.Text = 'Starting...'
 $panel.Controls.Add($stepLabel)
 
 $detailLabel = New-Object System.Windows.Forms.Label
@@ -167,7 +167,7 @@ $url = Get-Field $status 'supportUrl' ''
 if ($phone) { $supportParts += $phone }
 if ($url) { $supportParts += $url }
 $footer.Text = if ($supportParts.Count -gt 0) {
-    'Need help? ' + ($supportParts -join '   ·   ')
+    'Need help? ' + ($supportParts -join '   -   ')
 } else {
     'Please leave this computer switched on.'
 }
@@ -192,7 +192,7 @@ $timer.add_Tick({
     if ($null -eq $current) { return }
 
     $state = Get-Field $current 'state' 'running'
-    $stepLabel.Text = Get-Field $current 'step' 'Working…'
+    $stepLabel.Text = Get-Field $current 'step' 'Working...'
     $detailLabel.Text = Get-Field $current 'detail' ''
 
     $index = [int](Get-Field $current 'index' 0)
@@ -217,12 +217,12 @@ $timer.add_Tick({
         if ($state -eq 'failed' -or $failures.Count -gt 0) {
             $stepLabel.ForeColor = $bad
             $stepLabel.Text = 'Setup finished with problems'
-            $detailLabel.Text = "$($failures.Count) step(s) failed — see C:\ImageHub\logs"
+            $detailLabel.Text = "$($failures.Count) step(s) failed - see C:\ImageHub\logs"
         } else {
             $stepLabel.ForeColor = $good
             $stepLabel.Text = 'This computer is ready'
             $detailLabel.Text = if ($warnings.Count -gt 0) {
-                "Finished with $($warnings.Count) warning(s) — see C:\ImageHub\logs"
+                "Finished with $($warnings.Count) warning(s) - see C:\ImageHub\logs"
             } else {
                 'Provisioning completed successfully.'
             }

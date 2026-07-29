@@ -104,26 +104,55 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Check the provisioning scripts parse
+      - name: Check the provisioning scripts
         run: |
-          # PowerShell isn't needed to build the app, but a syntax error in the
-          # payload would only surface on a technician's machine at 2am.
-          if command -v pwsh >/dev/null 2>&1; then
-            pwsh -NoProfile -Command '
-              $ErrorActionPreference = "Stop"
-              foreach ($file in Get-ChildItem -Recurse -Filter *.ps1 -Path Shared, Windows) {
-                $errors = $null
-                [System.Management.Automation.Language.Parser]::ParseFile(
-                  $file.FullName, [ref]$null, [ref]$errors) | Out-Null
-                if ($errors) {
-                  Write-Host "::error file=$($file.FullName)::$($errors[0].Message)"
-                  exit 1
-                }
-                Write-Host "ok: $($file.Name)"
-              }'
-          else
-            echo "pwsh not available on this runner; skipping the PowerShell parse check."
+          set -euo pipefail
+
+          # Windows PowerShell 5.1 -- which is what actually runs Provision.ps1 on
+          # a target machine -- decodes a BOM-less file as Windows-1252, not UTF-8.
+          # An em dash (E2 80 94) then becomes three CP1252 characters, the last of
+          # which is a curly closing quote, and PowerShell treats curly quotes as
+          # string delimiters. That opened a phantom string, swallowed the braces,
+          # and produced "Missing closing '}'" on a script that parses perfectly
+          # under PowerShell 7. Requiring a BOM *and* plain ASCII closes both
+          # halves of that trap. This check needs no PowerShell, so it always runs.
+          fail=0
+          for f in Shared/payload/*.ps1 Windows/*.ps1; do
+            if [ "$(head -c 3 "$f" | od -An -tx1 | tr -d ' \n')" != "efbbbf" ]; then
+              echo "::error file=$f::missing UTF-8 BOM; Windows PowerShell 5.1 will decode it as ANSI"
+              fail=1
+            fi
+            # tail -c +4 skips the BOM itself, which is of course non-ASCII.
+            if tail -c +4 "$f" | LC_ALL=C grep -qn '[^ -~'"$(printf '\t')"']'; then
+              echo "::error file=$f::contains non-ASCII characters"
+              tail -c +4 "$f" | LC_ALL=C grep -n '[^ -~'"$(printf '\t')"']' | head -5
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "all payload scripts are ASCII with a UTF-8 BOM"
+
+      - name: Parse the provisioning scripts
+        run: |
+          set -euo pipefail
+          # The old version of this step was wrapped in `if command -v pwsh`, and
+          # pwsh is not on the macOS runners -- so it silently skipped on every
+          # build while a syntax error shipped. Install it and fail loudly instead.
+          if ! command -v pwsh >/dev/null 2>&1; then
+            brew install --quiet powershell/tap/powershell || brew install --quiet --cask powershell
           fi
+          pwsh -NoProfile -Command '
+            $bad = 0
+            foreach ($f in Get-ChildItem -Recurse -Filter *.ps1 -Path Shared, Windows) {
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $f.FullName, [ref]$null, [ref]$errors) | Out-Null
+              if ($errors) {
+                Write-Host "::error file=$($f.FullName)::$($errors[0].Message)"
+                $bad = 1
+              } else { Write-Host "ok: $($f.Name)" }
+            }
+            exit $bad'
 
       - name: Build app, zip, and DMG
         run: ./scripts/make_app.sh
