@@ -17,6 +17,10 @@ struct USBDrive: Identifiable, Equatable, Hashable {
     var volumeNames: [String]
     var mountPoints: [String]
     var isWholeDisk: Bool
+    /// True for mounted disk images (a mounted ISO reports as external and
+    /// ejectable, so it passed the eligibility test and was offered as a build
+    /// target — the very ISO the build was reading from).
+    var isVirtual: Bool = false
 
     var displayName: String {
         mediaName.isEmpty ? id : mediaName
@@ -33,7 +37,7 @@ struct USBDrive: Identifiable, Equatable, Hashable {
     /// Only external, ejectable media is ever offered as a build target — an
     /// internal disk must never show up in the picker.
     var isEligibleTarget: Bool {
-        isWholeDisk && !isInternal && (isRemovable || isEjectable)
+        isWholeDisk && !isInternal && !isVirtual && (isRemovable || isEjectable)
     }
 
     /// Windows install media needs room for the ISO plus the payload.

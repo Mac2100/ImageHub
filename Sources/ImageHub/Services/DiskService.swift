@@ -65,7 +65,9 @@ enum DiskService {
             busProtocol: (info["BusProtocol"] as? String) ?? "",
             volumeNames: volumeNames,
             mountPoints: mountPoints,
-            isWholeDisk: (info["WholeDisk"] as? Bool) ?? true
+            isWholeDisk: (info["WholeDisk"] as? Bool) ?? true,
+            isVirtual: (info["VirtualOrPhysical"] as? String) == "Virtual"
+                || (info["BusProtocol"] as? String) == "Disk Image"
         )
     }
 
