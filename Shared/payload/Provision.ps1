@@ -641,15 +641,29 @@ if ($apps.Count -gt 0) {
                     $silentArgs = Get-Setting $app 'silentArgs' ''
                     Write-Log "Running $([System.IO.Path]::GetFileName($installer)) $silentArgs..."
 
+                    # No -Wait: a wrong silent switch makes an installer show a
+                    # GUI error dialog and sit there. On a real run Sophos rejected
+                    # '/S' with "Non-option passed: /S", put up a modal, and the
+                    # whole provisioning run stopped dead with no timeout. Poll
+                    # instead and kill it if it outstays the budget.
+                    $timeoutMinutes = [int](Get-Setting $app 'timeoutMinutes' 30)
                     if ([System.IO.Path]::GetExtension($installer) -ieq '.msi') {
                         $msiArgs = @('/i', "`"$installer`"")
                         if ($silentArgs) { $msiArgs += $silentArgs.Split(' ') } else { $msiArgs += '/qn' }
-                        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -Wait -PassThru
+                        $process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $msiArgs -PassThru
                     } elseif ($silentArgs) {
-                        $process = Start-Process -FilePath $installer -ArgumentList $silentArgs -Wait -PassThru
+                        $process = Start-Process -FilePath $installer -ArgumentList $silentArgs -PassThru
                     } else {
-                        $process = Start-Process -FilePath $installer -Wait -PassThru
+                        $process = Start-Process -FilePath $installer -PassThru
                     }
+
+                    if (-not $process.WaitForExit($timeoutMinutes * 60 * 1000)) {
+                        try { $process.Kill($true) } catch { try { $process.Kill() } catch {} }
+                        throw ("No response after $timeoutMinutes minutes, so it was stopped. " +
+                            "A silent-install switch that the installer rejects will show a dialog " +
+                            "and wait forever - check the arguments for this app.")
+                    }
+                    $process.Refresh()
 
                     # 3010 means "success, needs a reboot" - not a failure.
                     if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
