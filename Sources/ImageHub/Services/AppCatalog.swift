@@ -74,6 +74,8 @@ enum AppCatalog {
         Entry(id: "Dropbox.Dropbox", name: "Dropbox", category: "Productivity"),
         Entry(id: "Adobe.Acrobat.Reader.32-bit", name: "Acrobat Reader (32-bit)", category: "Productivity"),
         Entry(id: "Foxit.FoxitReader", name: "Foxit PDF Reader", category: "Productivity"),
+        Entry(id: "PDFgear.PDFgear", name: "PDFgear", category: "Productivity",
+              note: "Free PDF editor - read, edit, sign, convert"),
         Entry(id: "Microsoft.OneNote", name: "OneNote", category: "Productivity"),
         Entry(id: "Mozilla.Thunderbird", name: "Thunderbird", category: "Productivity"),
 
