@@ -355,6 +355,7 @@ struct BuildProgressView: View {
     @State private var now = Date()
     @State private var celebrating = false
     @State private var celebrationSeed = 0
+    @State private var celebratedJobID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -375,17 +376,13 @@ struct BuildProgressView: View {
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
             if job.isRunning { now = date }
         }
-        .onChange(of: job.phase) { _, phase in
-            guard phase == .succeeded else { return }
-            celebrationSeed += 1
-            celebrating = true
-            // The burst is ~3s; drop the overlay afterwards so nothing keeps
-            // animating behind the finished view.
-            Task {
-                try? await Task.sleep(nanoseconds: 3_400_000_000)
-                celebrating = false
-            }
-        }
+        // Both hooks, deliberately. `activeJob` is cleared in the same
+        // continuation that sets `.succeeded`, so this view is torn down and a new
+        // one built from `history.first` that is *already* succeeded — onChange
+        // alone never saw a transition and the confetti never fired. onAppear
+        // covers that; the job id makes sure it fires once per build either way.
+        .onChange(of: job.phase) { _, _ in celebrateIfFinished() }
+        .onAppear { celebrateIfFinished() }
     }
 
     private var summary: some View {
@@ -432,6 +429,19 @@ struct BuildProgressView: View {
             }
         }
         .glassCard()
+    }
+
+    private func celebrateIfFinished() {
+        guard job.phase == .succeeded, celebratedJobID != job.id else { return }
+        celebratedJobID = job.id
+        celebrationSeed += 1
+        celebrating = true
+        // The burst runs ~3s; drop the overlay afterwards so nothing keeps
+        // animating behind the finished view.
+        Task {
+            try? await Task.sleep(nanoseconds: 3_400_000_000)
+            celebrating = false
+        }
     }
 
     private var headline: String {

@@ -412,66 +412,6 @@ struct WifiSpec: Codable, Equatable, Hashable {
     }
 }
 
-/// One vendor driver pack, and the hardware it applies to.
-///
-/// Matching is a case-insensitive substring test against what Windows reports in
-/// `Win32_ComputerSystem` — "Lenovo" as the manufacturer, "21F6" or
-/// "ThinkPad T14" as the model. Substring rather than exact because vendors pad
-/// those strings differently per SKU and an exact match is a trap.
-struct DriverPack: Codable, Equatable, Hashable, Identifiable {
-    var id: UUID = UUID()
-    var enabled: Bool = true
-    var name: String = ""
-    /// Folder of extracted drivers on the Mac.
-    var path: String = ""
-    /// Empty means "any manufacturer".
-    var manufacturerMatch: String = ""
-    /// Empty means "any model".
-    var modelMatch: String = ""
-
-    var appliesEverywhere: Bool {
-        manufacturerMatch.trimmingCharacters(in: .whitespaces).isEmpty
-            && modelMatch.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-
-    var displayName: String {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { return trimmed }
-        let folder = (path as NSString).lastPathComponent
-        return folder.isEmpty ? "Untitled pack" : folder
-    }
-
-    var scopeSummary: String {
-        if appliesEverywhere { return "All hardware" }
-        let parts = [manufacturerMatch, modelMatch]
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        return parts.joined(separator: " · ")
-    }
-
-    init(name: String = "", path: String = "",
-         manufacturerMatch: String = "", modelMatch: String = "") {
-        self.name = name
-        self.path = path
-        self.manufacturerMatch = manufacturerMatch
-        self.modelMatch = modelMatch
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = c.v(.id, UUID())
-        enabled = c.v(.enabled, true)
-        name = c.v(.name, "")
-        path = c.v(.path, "")
-        manufacturerMatch = c.v(.manufacturerMatch, "")
-        modelMatch = c.v(.modelMatch, "")
-    }
-}
-
-/// The 1.1.9 spelling of the drivers setting, read only so older templates
-/// migrate instead of silently losing their driver folder.
-private enum LegacyDriverKey: String, CodingKey { case driversPath }
-
 struct SystemSpec: Codable, Equatable, Hashable {
     /// Tokens: `%SERIAL%`, `%SERIAL4%`, `%RANDOM4%`, `%MODEL%`, `%TEMPLATE%`.
     var computerNameTemplate: String = "IT-%SERIAL4%"
@@ -519,15 +459,6 @@ struct SystemSpec: Codable, Equatable, Hashable {
     var organizationName: String = ""
     var logoPath: String = ""
 
-    /// Driver packs, each optionally scoped to the hardware it belongs to.
-    ///
-    /// Bundling every vendor's drivers is not an option — one model's pack runs
-    /// 1–3 GB and there are hundreds of models. So this is a library: add the
-    /// packs for the models you actually own, they all travel on the drive, and
-    /// each machine installs only what matches its own manufacturer and model.
-    /// A pack with no match rules installs everywhere, which is what you want for
-    /// something like Intel's Wi-Fi driver that covers most business laptops.
-    var driverPacks: [DriverPack] = []
     var supportPhone: String = ""
     var supportURL: String = ""
     /// Replaces the bare PowerShell console during provisioning with a
@@ -661,14 +592,6 @@ struct SystemSpec: Codable, Equatable, Hashable {
         startLayoutPath = c.v(.startLayoutPath, "")
         organizationName = c.v(.organizationName, "")
         logoPath = c.v(.logoPath, "")
-        driverPacks = c.v(.driverPacks, [DriverPack]())
-        // 1.1.9 had a single unscoped folder; carry it in as an install-everywhere
-        // pack so templates written against that version keep working.
-        let legacyDrivers = (try? decoder.container(keyedBy: LegacyDriverKey.self))
-            .map { $0.v(.driversPath, "") } ?? ""
-        if driverPacks.isEmpty, !legacyDrivers.isEmpty {
-            driverPacks = [DriverPack(name: "Drivers", path: legacyDrivers)]
-        }
         supportPhone = c.v(.supportPhone, "")
         supportURL = c.v(.supportURL, "")
         showProvisioningScreen = c.v(.showProvisioningScreen, true)
@@ -980,20 +903,6 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
                 "This template wipes every disk in the target machine, including secondary data drives.",
                 .disk
             )
-        }
-        if enabledApps.contains(where: { $0.source == .winget })
-            && system.wifi.enabled && !system.driverPacks.contains(where: { $0.enabled }) {
-            add(
-                "Wi-Fi is configured but no driver packs are set. Windows has no driver for many current wireless chipsets, so the machine may come up with no Wi-Fi adapter and every winget app will fail. Add the vendor's pack under Configuration → Drivers.",
-                .system
-            )
-        }
-        for pack in system.driverPacks where pack.enabled {
-            if pack.path.trimmingCharacters(in: .whitespaces).isEmpty {
-                add("Driver pack “\(pack.displayName)” has no folder set.", .system)
-            } else if !FileManager.default.fileExists(atPath: pack.path) {
-                add("Driver folder for “\(pack.displayName)” is missing: \(pack.path)", .system)
-            }
         }
         if enabledApps.contains(where: { $0.source == .winget }) && !system.wifi.enabled {
             add(

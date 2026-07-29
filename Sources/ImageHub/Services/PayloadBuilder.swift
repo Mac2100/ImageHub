@@ -67,14 +67,6 @@ enum PayloadBuilder {
             var value: String
         }
 
-        struct DriverPack: Encodable {
-            var name: String
-            /// Folder under the payload, e.g. `Drivers\\ThinkPad-T14`.
-            var relativePath: String
-            var manufacturerMatch: String
-            var modelMatch: String
-        }
-
         struct System: Encodable {
             var computerNameTemplate: String
             var timeZone: String
@@ -105,7 +97,6 @@ enum PayloadBuilder {
             var startLayout: String
             var organizationName: String
             var logo: String
-            var driverPacks: [DriverPack]
             var supportPhone: String
             var supportURL: String
             var showProvisioningScreen: Bool
@@ -137,17 +128,6 @@ enum PayloadBuilder {
 
     /// Assembles the payload at `<volume>/ImageHub`.
     @discardableResult
-    /// Folder-name-safe, and FAT32-safe: no spaces-only names, no punctuation the
-    /// filesystem or a cmd one-liner would choke on.
-    private static func sanitizeFolderName(_ raw: String) -> String {
-        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-        let mapped = raw.map { allowed.contains($0) ? $0 : "-" }
-        let collapsed = String(mapped).split(separator: "-", omittingEmptySubsequences: true)
-            .joined(separator: "-")
-        let trimmed = String(collapsed.prefix(40))
-        return trimmed.isEmpty ? "Pack" : trimmed
-    }
-
     static func write(
         template: DeploymentTemplate,
         secrets: AnswerFileBuilder.ResolvedSecrets,
@@ -231,47 +211,6 @@ enum PayloadBuilder {
 
         // 3b. Driver pack. Copied wholesale (INFs need their .cat and .sys
         // siblings), and installed by Provision.ps1 before the network step.
-        var driverPacks: [Config.DriverPack] = []
-        var usedFolders: Set<String> = []
-        for pack in template.system.driverPacks where pack.enabled && !pack.path.isEmpty {
-            let origin = URL(fileURLWithPath: pack.path, isDirectory: true)
-            var isDirectory: ObjCBool = false
-            guard fm.fileExists(atPath: origin.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                log("⚠︎ Driver folder not found, skipping \(pack.displayName): \(pack.path)")
-                continue
-            }
-
-            // Each pack gets its own subfolder so two vendors' INFs can't collide.
-            var folder = sanitizeFolderName(pack.displayName)
-            var suffix = 2
-            while usedFolders.contains(folder.lowercased()) {
-                folder = "\(sanitizeFolderName(pack.displayName))-\(suffix)"
-                suffix += 1
-            }
-            usedFolders.insert(folder.lowercased())
-
-            let destination = root
-                .appendingPathComponent("Drivers", isDirectory: true)
-                .appendingPathComponent(folder, isDirectory: true)
-            let plan = try FileCopier.plan(directory: origin)
-            let infs = plan.items.filter { $0.relativePath.lowercased().hasSuffix(".inf") }.count
-            log("Drivers · \(pack.displayName) [\(pack.scopeSummary)]: \(plan.fileCount) files, \(plan.totalBytes.byteSize), \(infs) INF\(infs == 1 ? "" : "s")")
-            if infs == 0 {
-                log("⚠︎ \(pack.displayName) has no .inf files — pnputil will have nothing to install. Vendor packs sometimes need extracting twice.")
-            }
-            try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-            try FileCopier.copy(plan: plan, to: destination, progress: { _, _ in }, isCancelled: { false })
-
-            driverPacks.append(
-                Config.DriverPack(
-                    name: pack.displayName,
-                    relativePath: "Drivers\\\(folder)",
-                    manufacturerMatch: pack.manufacturerMatch,
-                    modelMatch: pack.modelMatch
-                )
-            )
-        }
-
         // 4. Custom scripts.
         var scripts: [Config.Script] = []
         let scriptsDirectory = root.appendingPathComponent("Scripts", isDirectory: true)
@@ -301,8 +240,7 @@ enum PayloadBuilder {
             wallpaper: wallpaper,
             lockScreen: lockScreen,
             startLayout: startLayout,
-            logo: logo,
-            driverPacks: driverPacks
+            logo: logo
         )
 
         let encoder = JSONEncoder()
@@ -333,8 +271,7 @@ enum PayloadBuilder {
         wallpaper: String,
         lockScreen: String,
         startLayout: String,
-        logo: String,
-        driverPacks: [Config.DriverPack]
+        logo: String
     ) -> Config {
         let system = template.system
         return Config(
@@ -393,7 +330,6 @@ enum PayloadBuilder {
                 startLayout: startLayout,
                 organizationName: system.organizationName,
                 logo: logo,
-                driverPacks: driverPacks,
                 supportPhone: system.supportPhone,
                 supportURL: system.supportURL,
                 showProvisioningScreen: system.showProvisioningScreen,
