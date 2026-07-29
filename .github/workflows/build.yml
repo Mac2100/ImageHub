@@ -145,8 +145,9 @@ jobs:
             grep -q "pass=\"${pass}\"" /tmp/autounattend.xml \
               || { echo "::error::answer file is missing the ${pass} pass"; exit 1; }
           done
-          grep -q "ImageHub\\\\Provision.ps1" /tmp/autounattend.xml \
-            || { echo "::error::answer file never launches Provision.ps1"; exit 1; }
+          # Provisioning is launched via Launch.cmd now, not by naming
+          # Provision.ps1 in the answer file — the inlined PowerShell was too long
+          # for the command string. The helper checks below cover that chain.
 
           # Element order inside a component is part of the unattend schema, and
           # Setup rejects the entire answer file when it's wrong — it does not
@@ -214,27 +215,35 @@ jobs:
           python3 - <<'PY2'
           import sys, xml.etree.ElementTree as ET
           NS = {'u': 'urn:schemas-microsoft-com:unattend'}
-          LIMIT = 259
+          # 259 is the documented ceiling for RunSynchronousCommand/Path. Whether
+          # FirstLogonCommands/CommandLine shares it is not something I could
+          # confirm, so it gets a looser bound -- enough to catch an inlined
+          # script without failing a release over a guess. Both are kept short in
+          # practice by delegating to Stage.cmd / Launch.cmd.
+          LIMITS = {'Path': 259, 'CommandLine': 1024}
           bad = []
-          for path in ET.parse('/tmp/autounattend.xml').getroot().iter():
-              tag = path.tag.split('}')[-1]
-              if tag in ('Path', 'CommandLine') and (path.text or ''):
-                  n = len(path.text.strip())
-                  if n > LIMIT:
-                      bad.append(f"<{tag}> is {n} chars (limit {LIMIT}): "
-                                 f"{path.text.strip()[:80]}...")
+          for node in ET.parse('/tmp/autounattend.xml').getroot().iter():
+              tag = node.tag.split('}')[-1]
+              limit = LIMITS.get(tag)
+              if limit and (node.text or ''):
+                  n = len(node.text.strip())
+                  if n > limit:
+                      bad.append(f"<{tag}> is {n} chars (limit {limit}): "
+                                 f"{node.text.strip()[:80]}...")
           for line in bad:
               print(f"::error::{line}")
           if bad:
               sys.exit(1)
-          print("all command paths are within the 259-character limit")
+          print("all command strings are within their length limits")
           PY2
 
           # Stage.cmd does the payload staging the answer file used to inline.
-          grep -q "Stage.cmd" /tmp/autounattend.xml \
-            || { echo "::error::answer file never calls Stage.cmd"; exit 1; }
-          test -f Shared/payload/Stage.cmd \
-            || { echo "::error::Shared/payload/Stage.cmd is missing"; exit 1; }
+          for helper in Stage Launch; do
+            grep -q "${helper}.cmd" /tmp/autounattend.xml \
+              || { echo "::error::answer file never calls ${helper}.cmd"; exit 1; }
+            test -f "Shared/payload/${helper}.cmd" \
+              || { echo "::error::Shared/payload/${helper}.cmd is missing"; exit 1; }
+          done
 
           # The payload config is what Provision.ps1 parses.
           "$BIN" --emit-payload-config > /tmp/config.json

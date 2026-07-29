@@ -487,19 +487,18 @@ struct AnswerFileBuilder {
     }
 
     private func firstLogonCommands() -> String? {
-        // Provisioning runs from C:\ImageHub (staged during specialize); the USB
-        // search is a fallback in case staging didn't happen.
-        let launcher = """
-            $p = 'C:\\ImageHub\\Provision.ps1'; \
-            if (-not (Test-Path $p)) { \
-            $p = Get-PSDrive -PSProvider FileSystem | \
-            ForEach-Object { Join-Path $_.Root 'ImageHub\\Provision.ps1' } | \
-            Where-Object { Test-Path $_ } | Select-Object -First 1 }; \
-            if ($p) { & $p }
-            """
-
+        // Provisioning runs from C:\ImageHub (staged during specialize) with a
+        // drive search as a fallback, but both live in Launch.cmd rather than
+        // here: the inlined PowerShell reached 302 characters, and an
+        // over-length command string invalidates the entire unattend file —
+        // reported only after the image is applied.
+        //
+        // Launch.cmd is staged to C:\ImageHub by Stage.cmd, and searches the
+        // drives itself if staging never happened.
         var commands: [(String, String)] = [
-            (powershellCommand(launcher), "ImageHub provisioning")
+            ("cmd /c for %d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do "
+                + #"@if exist %d:\ImageHub\Launch.cmd call %d:\ImageHub\Launch.cmd"#,
+             "ImageHub provisioning")
         ]
         if template.admin.hideFromLoginScreen && !template.admin.username.isEmpty {
             commands.append((
