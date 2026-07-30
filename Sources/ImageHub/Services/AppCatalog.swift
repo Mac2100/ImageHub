@@ -24,11 +24,12 @@ enum AppCatalog {
         Entry(id: "Microsoft.Edge", name: "Microsoft Edge", category: "Browsers", note: "Preinstalled on Windows 11"),
 
         // Productivity
-        Entry(id: "Microsoft.Office", name: "Microsoft 365 Apps", category: "Productivity", note: "Needs a licence assigned at sign-in"),
+        Entry(id: "Microsoft.Office", name: "Microsoft 365 Apps", category: "Productivity",
+              note: "Often fails - winget's hash lags Microsoft's installer; the Office Deployment Tool is more reliable"),
         Entry(id: "Adobe.Acrobat.Reader.64-bit", name: "Adobe Acrobat Reader", category: "Productivity"),
         Entry(id: "Microsoft.Teams", name: "Microsoft Teams", category: "Productivity"),
         Entry(id: "Zoom.Zoom", name: "Zoom", category: "Productivity"),
-        Entry(id: "Slack.Slack", name: "Slack", category: "Productivity"),
+        Entry(id: "SlackTechnologies.Slack", name: "Slack", category: "Productivity"),
         Entry(id: "Notion.Notion", name: "Notion", category: "Productivity"),
         Entry(id: "Libreoffice.Libreoffice", name: "LibreOffice", category: "Productivity"),
 

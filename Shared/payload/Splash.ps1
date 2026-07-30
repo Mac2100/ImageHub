@@ -37,6 +37,10 @@ $textMain   = [System.Drawing.Color]::FromArgb(240, 242, 245)
 $textDim    = [System.Drawing.Color]::FromArgb(150, 156, 166)
 $good       = [System.Drawing.Color]::FromArgb(52, 199, 89)
 $bad        = [System.Drawing.Color]::FromArgb(255, 92, 92)
+# Full-panel banner colours for the finished state - dark enough for white text,
+# saturated enough to read as a state change from across a room.
+$bannerGood = [System.Drawing.Color]::FromArgb(24, 118, 62)
+$bannerBad  = [System.Drawing.Color]::FromArgb(140, 32, 32)
 
 function Read-Status {
     for ($attempt = 0; $attempt -lt 3; $attempt++) {
@@ -99,7 +103,12 @@ $logoBox.BackColor = [System.Drawing.Color]::Transparent
 $logoPath = Get-Field $status 'logo' ''
 if ($logoPath -and (Test-Path -LiteralPath $logoPath)) {
     try {
-        $logoBox.Image = [System.Drawing.Image]::FromFile($logoPath)
+        # Not Image::FromFile - that holds the file open for the life of the
+        # Image, and the OEM information step later needs to read the same file.
+        # On a real run it failed with "being used by another process".
+        $logoBytes = [System.IO.File]::ReadAllBytes($logoPath)
+        $logoStream = New-Object System.IO.MemoryStream(,$logoBytes)
+        $logoBox.Image = [System.Drawing.Image]::FromStream($logoStream)
     } catch { }
 }
 $panel.Controls.Add($logoBox)
@@ -118,6 +127,17 @@ $title.Text = if ($organization) {
     'Setting up this computer'
 }
 $panel.Controls.Add($title)
+
+# Hidden during the run; revealed at the end so "finished" is the largest thing
+# on the screen rather than a reworded status line.
+$headingLabel = New-Object System.Windows.Forms.Label
+$headingLabel.AutoSize = $false
+$headingLabel.Size = New-Object System.Drawing.Size(700, 56)
+$headingLabel.Location = New-Object System.Drawing.Point(30, 140)
+$headingLabel.TextAlign = 'MiddleCenter'
+$headingLabel.Font = New-Object System.Drawing.Font('Segoe UI', 30, [System.Drawing.FontStyle]::Bold)
+$headingLabel.Visible = $false
+$panel.Controls.Add($headingLabel)
 
 $stepLabel = New-Object System.Windows.Forms.Label
 $stepLabel.AutoSize = $false
@@ -205,6 +225,12 @@ $timer.add_Tick({
         $bar.Value = [Math]::Min(100, [int](($index / [double]$total) * 100))
     }
 
+    # Installers, the Lenovo Fn popup and the taskbar all steal foreground during
+    # a run, and TopMost set once at creation does not survive that. Re-asserting
+    # each tick is cheap and keeps the screen genuinely in front.
+    if (-not $form.TopMost) { $form.TopMost = $true }
+    $form.BringToFront()
+
     if ($state -eq 'done' -or $state -eq 'failed') {
         $timer.Stop()
         $bar.Style = 'Continuous'
@@ -214,19 +240,45 @@ $timer.add_Tick({
         $failures = @(Get-Field $current 'failures' @())
         $warnings = @(Get-Field $current 'warnings' @())
 
+        # Deliberately loud. A technician walked away from a finished machine and
+        # closed this by hand because a changed line of small text did not read as
+        # "done" - the whole screen now changes colour and says so.
+        $bar.Visible = $false
+        $headingLabel.Visible = $true
+
         if ($state -eq 'failed' -or $failures.Count -gt 0) {
-            $stepLabel.ForeColor = $bad
-            $stepLabel.Text = 'Setup finished with problems'
-            $detailLabel.Text = "$($failures.Count) step(s) failed - see C:\ImageHub\logs"
+            $panel.BackColor = $bannerBad
+            $headingLabel.ForeColor = [System.Drawing.Color]::White
+            $headingLabel.Text = 'FINISHED WITH PROBLEMS'
+            $stepLabel.ForeColor = [System.Drawing.Color]::White
+            $stepLabel.Text = "$($failures.Count) step(s) failed"
+            $detailLabel.ForeColor = [System.Drawing.Color]::White
+            $detailLabel.Text = 'See C:\ImageHub\logs before handing this machine over.'
         } else {
-            $stepLabel.ForeColor = $good
+            $panel.BackColor = $bannerGood
+            $headingLabel.ForeColor = [System.Drawing.Color]::White
+            $headingLabel.Text = 'FINISHED'
+            $stepLabel.ForeColor = [System.Drawing.Color]::White
             $stepLabel.Text = 'This computer is ready'
+            $detailLabel.ForeColor = [System.Drawing.Color]::White
             $detailLabel.Text = if ($warnings.Count -gt 0) {
-                "Finished with $($warnings.Count) warning(s) - see C:\ImageHub\logs"
+                "Completed with $($warnings.Count) warning(s) - see C:\ImageHub\logs"
             } else {
                 'Provisioning completed successfully.'
             }
         }
+
+        # The close button is the one thing to act on now, so make it read that way
+        # against the banner rather than staying the same small accent button.
+        $closeButton.Text = 'Close this screen'
+        $closeButton.Size = New-Object System.Drawing.Size(220, 40)
+        $closeButton.Location = New-Object System.Drawing.Point(270, 312)
+        $closeButton.BackColor = [System.Drawing.Color]::White
+        $closeButton.ForeColor = [System.Drawing.Color]::Black
+        $closeButton.Font = New-Object System.Drawing.Font('Segoe UI', 11, [System.Drawing.FontStyle]::Bold)
+
+        # Audible too: the machine is usually across the room by this point.
+        try { [System.Media.SystemSounds]::Asterisk.Play() } catch { }
 
         $note = Get-Field $current 'note' ''
         if ($note) { $noteLabel.Text = $note }

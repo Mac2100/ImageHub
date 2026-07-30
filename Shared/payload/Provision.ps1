@@ -218,6 +218,23 @@ if (Get-Setting $System 'showProvisioningScreen' $true) {
     }
 }
 
+# Whether this run has the privileges it needs, stated up front. Half of what
+# follows writes to HKLM or the default user hive, and without elevation those
+# fail one by one with "Attempted to perform an unauthorized operation" -- which
+# is exactly what happened to the Explorer defaults step on a real machine. This
+# line existed once and was lost when the driver feature was removed; without it
+# there is no way to tell a privilege problem from a bug.
+$identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+$script:IsElevated = $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($script:IsElevated) {
+    Write-Log -Level OK -Message "Running elevated as $($identity.Identity.Name)."
+} else {
+    Write-Log -Level WARN -Message ("NOT elevated (running as $($identity.Identity.Name)). " +
+        "Machine-wide settings and the default user profile will fail. " +
+        "Launch.cmd normally registers an elevated scheduled task for this.")
+    $script:Warnings += 'Provisioning ran without administrator rights, so machine-wide settings were skipped.'
+}
+
 # ---------------------------------------------------------------------------
 # 1. Network - first, because everything else may need it
 # ---------------------------------------------------------------------------
