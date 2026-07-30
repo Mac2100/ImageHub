@@ -39,23 +39,28 @@ def rounded_rect_coverage(x: float, y: float, cx: float, cy: float,
 def build() -> bytearray:
     rows = bytearray()
 
-    body_half_w = 0.255 * W
-    body_half_h = 0.150 * W
-    body_radius = 0.052 * W
     centre = W / 2.0
-    # Nudge the drive body up so the plus sits in optical centre.
-    body_cy = centre - 0.012 * W
 
-    inner_half_w = body_half_w - GLYPH_STROKE
-    inner_half_h = body_half_h - GLYPH_STROKE
-    inner_radius = max(body_radius - GLYPH_STROKE, 1.0)
+    # A downward arrow landing on a drive. The previous glyph was a rounded
+    # rectangle outline with a dot at one end and a plus at the other, which at
+    # icon size read as a game controller rather than anything to do with
+    # deployment -- it was mistaken for the wrong app's icon in the Dock.
+    #
+    # An arrow into a device is the conventional "write this to that" mark, and
+    # it survives being shrunk to 16pt in a sidebar, which an outlined body with
+    # two small details inside does not.
+    stem_half_w = 0.052 * W
+    stem_top = 0.235 * W
+    stem_bottom = 0.520 * W
 
-    led_cx = centre - body_half_w + GLYPH_STROKE * 2.6
-    led_r = 0.024 * W
+    head_top = 0.470 * W
+    head_bottom = 0.660 * W
+    head_half_w = 0.150 * W
 
-    plus_cx = centre + body_half_w - GLYPH_STROKE * 2.9
-    plus_arm = 0.055 * W
-    plus_thickness = GLYPH_STROKE * 0.86
+    bar_cy = 0.790 * W
+    bar_half_w = 0.250 * W
+    bar_half_h = 0.055 * W
+    bar_radius = 0.030 * W
 
     for py in range(W):
         y = py + 0.5
@@ -75,21 +80,22 @@ def build() -> bytearray:
             g = round(TOP_LEFT[1] + (BOTTOM_RIGHT[1] - TOP_LEFT[1]) * t)
             b = round(TOP_LEFT[2] + (BOTTOM_RIGHT[2] - TOP_LEFT[2]) * t)
 
-            # Drive body outline.
-            in_body = rounded_rect_coverage(x, y, centre, body_cy,
-                                            body_half_w, body_half_h, body_radius)
-            in_hole = rounded_rect_coverage(x, y, centre, body_cy,
-                                            inner_half_w, inner_half_h, inner_radius)
-            white = bool(in_body and not in_hole)
+            white = False
 
-            if not white and in_hole:
-                # Activity LED.
-                if math.hypot(x - led_cx, y - body_cy) <= led_r:
+            # Arrow stem.
+            if stem_top <= y <= stem_bottom and abs(x - centre) <= stem_half_w:
+                white = True
+
+            # Arrow head: a triangle tapering to a point at the bottom.
+            if not white and head_top <= y <= head_bottom:
+                span = head_half_w * (1.0 - (y - head_top) / (head_bottom - head_top))
+                if abs(x - centre) <= span:
                     white = True
-                # Plus sign.
-                elif (abs(x - plus_cx) <= plus_arm and abs(y - body_cy) <= plus_thickness / 2) or \
-                     (abs(y - body_cy) <= plus_arm and abs(x - plus_cx) <= plus_thickness / 2):
-                    white = True
+
+            # The drive it lands on.
+            if not white and rounded_rect_coverage(x, y, centre, bar_cy,
+                                                   bar_half_w, bar_half_h, bar_radius):
+                white = True
 
             if white:
                 r = g = b = 255
