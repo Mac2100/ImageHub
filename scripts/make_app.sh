@@ -25,6 +25,13 @@ mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
 cp "${BIN_PATH}" "${APP}/Contents/MacOS/${APP_NAME}"
 
 # --- App icon -----------------------------------------------------------------
+# Regenerate the master PNG first. It is drawn from the same SF Symbol and the
+# same gradient the app puts on screen (AppTheme.glyph in Theme.swift), so the
+# Dock icon, the DMG and the README can't drift away from the mark in the UI —
+# which is exactly what happened while the icon was hand-drawn by a separate
+# script. Requires macOS for SF Symbols, which is where this script runs anyway.
+swift scripts/make_icon.swift
+
 ICONSET="dist/AppIcon.iconset"
 mkdir -p "${ICONSET}"
 for size in 16 32 128 256 512; do

@@ -215,7 +215,7 @@ Shared/schema/             JSON Schema for templates and the payload config
 Windows/ImageHub.ps1       Windows-side builder over the same schema
 scripts/make_app.sh        Universal build → .app, .zip, .dmg
 scripts/build_wimlib.sh    Builds the bundled wimlib-imagex for this arch
-scripts/make_icon.py       Regenerates the app icon
+scripts/make_icon.swift    Redraws the app icon from the in-app SF Symbol
 ```
 
 ## CI / Releases

@@ -157,6 +157,28 @@ jobs:
       - name: Build app, zip, and DMG
         run: ./scripts/make_app.sh
 
+      # make_app.sh redraws Resources/icon_1024.png from the SF Symbol the app
+      # itself displays. That needs macOS, so it can only happen here — and the
+      # README renders that same file straight out of the repo. Push it back when
+      # it changes, otherwise the picture in the README is whatever was committed
+      # by hand the last time somebody guessed at the shape. The render is
+      # deterministic, so this settles after one commit instead of looping.
+      - name: Commit the regenerated icon
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # Never fail a release over the README's picture.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- Resources/icon_1024.png; then
+            echo "icon is unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Resources/icon_1024.png
+          git commit -m "Regenerate the app icon from the in-app symbol"
+          git push origin HEAD:main
+
       - name: Verify the generated answer file and payload config
         run: |
           set -euo pipefail
