@@ -245,13 +245,28 @@ enum DiskService {
         else { return }
 
         let wanted = url.standardizedFileURL.path
+        let fm = FileManager.default
+
         for image in images {
             guard let path = image["image-path"] as? String,
-                  URL(fileURLWithPath: path).standardizedFileURL.path == wanted,
                   let entities = image["system-entities"] as? [[String: Any]]
             else { continue }
+            let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
 
-            log("\(url.lastPathComponent) is already attached — detaching it first.")
+            // This image, or an orphan whose backing file has since been deleted.
+            // Orphans matter because a stale mount holding the same volume name
+            // pushes ours to "<name> 1" — the ISO exists in more than one place on
+            // a working Mac (a download and the library copy), so a leftover from
+            // one blocks the name for the other. Harmless to read from, but it
+            // accumulates a mount per build until something is ejected by hand.
+            let isOurs = standardized == wanted
+            let isOrphan = !fm.fileExists(atPath: standardized)
+            guard isOurs || isOrphan else { continue }
+
+            log(isOurs
+                ? "\(url.lastPathComponent) is already attached — detaching it first."
+                : "Detaching a stale mount of \((standardized as NSString).lastPathComponent), whose file is gone.")
+
             // Detaching the whole-disk dev entry releases every volume on it.
             let devEntries = entities.compactMap { $0["dev-entry"] as? String }
             for entry in devEntries.sorted(by: { $0.count < $1.count }) {
