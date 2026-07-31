@@ -315,6 +315,29 @@ $sharedKey
             identical in the log to one that did. Keep the output, check it, and
             confirm the association rather than assuming it.
         #>
+        <#
+            netsh wlan cannot do anything at all without the Wireless AutoConfig
+            service, and on a freshly imaged machine that has only ever been on
+            Ethernet nothing has started it -- wlansvc ships demand-start. Three
+            runs failed here with "The Wireless AutoConfig Service (wlansvc) is
+            not running", which the old "| Out-Null" hid completely.
+        #>
+        try {
+            $wlansvc = Get-Service -Name 'wlansvc' -ErrorAction Stop
+            if ($wlansvc.StartType -ne 'Automatic') {
+                Set-Service -Name 'wlansvc' -StartupType Automatic -ErrorAction Stop
+            }
+            if ($wlansvc.Status -ne 'Running') {
+                Write-Log -Level INFO -Message 'Starting the Wireless AutoConfig service.'
+                Start-Service -Name 'wlansvc' -ErrorAction Stop
+                $wlansvc.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
+            }
+            Write-Log -Level OK -Message 'Wireless AutoConfig is running.'
+        } catch {
+            throw ('The Wireless AutoConfig service could not be started, so no Wi-Fi ' +
+                "profile can be stored: $($_.Exception.Message)")
+        }
+
         $profilePath = Join-Path $env:TEMP 'imagehub-wifi.xml'
         Set-Content -LiteralPath $profilePath -Value $profileXml -Encoding UTF8
         $added = & netsh.exe wlan add profile filename="$profilePath" user=all 2>&1
@@ -648,9 +671,10 @@ Invoke-Step 'Applying Explorer and shell defaults' {
             if (Get-Setting $System 'taskbarAlignLeft' $false) {
                 Set-ShellValue $advanced 'TaskbarAl' 0
             }
-            if (Get-Setting $System 'disableWidgets' $false) {
-                Set-ShellValue $advanced 'TaskbarDa' 0
-            }
+            # TaskbarDa is not the way to do this any more. Windows 11 25H2
+            # protects the value, so both writes came back "Attempted to perform
+            # an unauthorized operation" -- the machine policy below is the
+            # supported route and is applied once, outside this per-hive loop.
             if (Get-Setting $System 'classicContextMenu' $false) {
                 $clsid = "$base\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
                 Set-ShellValue $clsid '(Default)' '' 'String'
@@ -671,6 +695,12 @@ Invoke-Step 'Applying Explorer and shell defaults' {
                 Set-ShellValue 'Registry::HKU\ImageHubDefault\Software\Policies\Microsoft\Windows\Explorer' `
                     'DisableSearchBoxSuggestions' 1
             }
+        }
+
+        # Widgets: the machine policy, which is what Microsoft documents and what
+        # actually takes. It covers every account, so it is written once.
+        if (Get-Setting $System 'disableWidgets' $false) {
+            Set-ShellValue 'HKLM:\SOFTWARE\Policies\Microsoft\Dsh' 'AllowNewsAndInterests' 0
         }
 
         $applied = $script:ShellApplied
