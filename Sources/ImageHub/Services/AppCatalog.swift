@@ -32,6 +32,10 @@ enum AppCatalog {
         Entry(id: "SlackTechnologies.Slack", name: "Slack", category: "Productivity"),
         Entry(id: "Notion.Notion", name: "Notion", category: "Productivity"),
         Entry(id: "Libreoffice.Libreoffice", name: "LibreOffice", category: "Productivity"),
+        Entry(id: "Anthropic.Claude", name: "Claude", category: "Productivity",
+              note: "Package ID not verified from macOS - the log names the right one if this misses"),
+        Entry(id: "Anthropic.ClaudeCode", name: "Claude Code", category: "Developer",
+              note: "Package ID not verified from macOS - the log names the right one if this misses"),
 
         // Utilities
         Entry(id: "7zip.7zip", name: "7-Zip", category: "Utilities"),

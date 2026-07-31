@@ -780,18 +780,44 @@ if ($apps.Count -gt 0) {
             switch ($source) {
                 'winget' {
                     if (-not $winget) { throw 'winget is not available.' }
+                    $packageID = [string](Get-Setting $app 'packageID')
+                    # --source winget: catalog IDs are winget IDs, and leaving the
+                    # source open lets the Microsoft Store copy of the same app
+                    # (Slack has one) join the match and muddy the result.
                     $arguments = @(
-                        'install', '--id', (Get-Setting $app 'packageID'),
-                        '--exact', '--silent',
+                        'install', '--id', $packageID,
+                        '--exact', '--silent', '--source', 'winget',
                         '--accept-package-agreements', '--accept-source-agreements',
                         '--disable-interactivity'
                     )
-                    $version = Get-Setting $app 'version' ''
+                    $version = [string](Get-Setting $app 'version' '')
                     if ($version) { $arguments += @('--version', $version) }
 
-                    Write-Log "Installing $name via winget..."
+                    # The exact command, so a failure can be reproduced by hand
+                    # and a stray pinned version is visible rather than inferred.
+                    Write-Log "Installing $name via winget: winget $($arguments -join ' ')"
                     $output = & $winget @arguments 2>&1
                     $output | ForEach-Object { Add-Content -LiteralPath $LogFile -Value "      $_" }
+
+                    <#
+                        A pinned version that no longer exists in the catalog fails
+                        with the same "No package found matching input criteria" as a
+                        wrong ID, which is thoroughly misleading -- it sends you
+                        hunting for a package that was there all along. If a version
+                        was pinned, drop it and try once more for the latest.
+                    #>
+                    if ($LASTEXITCODE -eq -1978335212 -and $version) {
+                        Write-Log -Level WARN -Message ("$name version $version was not found. " +
+                            'Retrying without the version pin.')
+                        $arguments = @(
+                            'install', '--id', $packageID,
+                            '--exact', '--silent', '--source', 'winget',
+                            '--accept-package-agreements', '--accept-source-agreements',
+                            '--disable-interactivity'
+                        )
+                        $output = & $winget @arguments 2>&1
+                        $output | ForEach-Object { Add-Content -LiteralPath $LogFile -Value "      $_" }
+                    }
 
                     # winget uses 0 for success and 0x8A150061 for "already installed".
                     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335135) {
@@ -804,20 +830,18 @@ if ($apps.Count -gt 0) {
                         $detail = if ($reason) { ' - ' + ($reason -join ' / ') } else { '' }
 
                         <#
-                            -1978335212 is "No package found matching input
-                            criteria" -- the package ID in the catalog is simply
-                            wrong. Guessing the correct one from a Mac has already
-                            failed twice, so ask winget: search by display name and
-                            log the candidate IDs. The next log then contains the
-                            answer instead of another guess.
+                            "No package found matching input criteria" with no
+                            version pinned means the ID really is wrong. Guessing the
+                            right one from a Mac with no winget on it has already
+                            failed, so ask winget: search by display name and log the
+                            candidate IDs. The next log then contains the answer.
                         #>
                         if ($LASTEXITCODE -eq -1978335212) {
                             try {
                                 $found = & $winget search --name $name --source winget `
                                     --accept-source-agreements 2>&1
                                 Write-Log -Level WARN -Message ("No winget package '" +
-                                    [string](Get-Setting $app 'packageID') +
-                                    "'. Searching for '$name' instead:")
+                                    "$packageID'. Searching for '$name' instead:")
                                 $found | Select-Object -First 12 | ForEach-Object {
                                     Add-Content -LiteralPath $LogFile -Value "      $_"
                                 }
