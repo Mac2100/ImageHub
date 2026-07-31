@@ -30,6 +30,11 @@ screen. No keystrokes in between.
 - **Wipe and reimage in one pass** — the generated `autounattend.xml` wipes the
   target disk, lays down EFI/MSR/Windows partitions, and installs the edition the
   template asks for.
+- **Activation, handled** — by default no product key goes into the answer file at
+  all, so Windows uses the OEM key in the PC's firmware (or the machine's digital
+  licence) and activates on its own; provisioning installs that firmware key and
+  runs activation to be sure. KMS host and MAK/retail keys are both options.
+  Nobody opens Settings to clear an "Activate Windows" watermark.
 - **IT admin profile** — a local administrator account with a password kept in
   your macOS Keychain, auto-logon for the provisioning run, optional hiding from
   the sign-in screen afterwards.

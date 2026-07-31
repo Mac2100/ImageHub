@@ -295,7 +295,9 @@ function New-AnswerFile {
     }
 
     $productKeyBlock = ''
-    switch (Get-Setting $windows 'productKeyMode' 'generic') {
+    # 'firmware' and 'none' both leave the block empty, which is what lets Windows
+    # use the OEM key in the PC's firmware and activate on its own.
+    switch (Get-Setting $windows 'productKeyMode' 'firmware') {
         'generic' {
             $key = $GenericKeys[$release][$edition]
             if ($key) {

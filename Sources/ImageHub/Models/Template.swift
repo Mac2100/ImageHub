@@ -95,19 +95,104 @@ struct WindowsSpec: Codable, Equatable, Hashable {
     /// True when this template always builds from one specific ISO.
     var pinsLibraryImage: Bool { libraryImageID != nil }
 
-    var productKeyMode: ProductKeyMode = .generic
+    /// Firmware by default: business-class PCs carry their Windows licence in an
+    /// ACPI table, and writing *any* key into the answer file overrides it. That
+    /// is how a machine that would have activated by itself ends up wearing an
+    /// "Activate Windows" watermark — the generic key is a KMS client key and
+    /// only activates against a KMS host.
+    var productKeyMode: ProductKeyMode = .firmware
     var acceptEULA: Bool = true
+    var activation: ActivationSpec = ActivationSpec()
 
     enum ProductKeyMode: String, Codable, CaseIterable, Identifiable, Hashable {
-        case none, generic, custom
+        // Declaration order is picker order, so the mode that needs no extra
+        // infrastructure comes first and "no key at all" comes last.
+        case firmware, generic, custom, none
         var id: String { rawValue }
 
         var label: String {
             switch self {
             case .none: return "None (choose at Setup)"
-            case .generic: return "Generic edition key"
+            case .firmware: return "The PC's built-in key (OEM)"
+            case .generic: return "Generic edition key (KMS)"
             case .custom: return "Specific key"
             }
+        }
+
+        var detail: String {
+            switch self {
+            case .none:
+                return """
+                    No key goes into the answer file and Setup asks for one. Only \
+                    useful if a technician is standing there.
+                    """
+            case .firmware:
+                return """
+                    Nothing is written into the answer file, so Windows uses the OEM \
+                    key in the PC's firmware or its digital licence and activates on \
+                    its own. Right for machines that came with Windows preinstalled. \
+                    The edition is still pinned by image name, not by the key.
+                    """
+            case .generic:
+                return """
+                    Microsoft's public KMS client key for this edition. It selects the \
+                    edition during Setup but never activates by itself — without a \
+                    reachable KMS host the machine shows "Activate Windows".
+                    """
+            case .custom:
+                return """
+                    A MAK or retail key of your own, written into the answer file. \
+                    These activate over the internet without a KMS host.
+                    """
+            }
+        }
+
+        /// True when this mode puts a key in the answer file that will not
+        /// activate unless something else is configured.
+        var needsKMSHost: Bool { self == .generic }
+    }
+
+    /// What provisioning does about activation once Windows is up. Separate from
+    /// the key: a firmware key needs a nudge on some machines, and a KMS client
+    /// key needs to be told where the host is.
+    struct ActivationSpec: Codable, Equatable, Hashable {
+        var mode: Mode = .automatic
+        var kmsHost: String = ""
+
+        enum Mode: String, Codable, CaseIterable, Identifiable, Hashable {
+            case automatic, kms, skip
+            var id: String { rawValue }
+
+            var label: String {
+                switch self {
+                case .automatic: return "Automatic"
+                case .kms: return "Against a KMS host"
+                case .skip: return "Leave it alone"
+                }
+            }
+
+            var detail: String {
+                switch self {
+                case .automatic:
+                    return """
+                        Installs the OEM key from the PC's firmware if there is one, \
+                        then activates online. Clears the "Activate Windows" watermark \
+                        without anyone touching Settings.
+                        """
+                case .kms:
+                    return "Points the machine at your KMS host and activates against it."
+                case .skip:
+                    return "Provisioning does not touch activation."
+                }
+            }
+        }
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            mode = c.v(.mode, Mode.automatic)
+            kmsHost = c.v(.kmsHost, "")
         }
     }
 
@@ -122,8 +207,14 @@ struct WindowsSpec: Codable, Equatable, Hashable {
         libraryImageID = c.opt(.libraryImageID)
         customWimPath = c.v(.customWimPath, "")
         imageIndex = c.opt(.imageIndex)
-        productKeyMode = c.v(.productKeyMode, ProductKeyMode.generic)
+        // Templates written before activation was configurable have no key mode
+        // recorded only if they predate it entirely; those get .firmware, which is
+        // the behaviour they most likely wanted. An explicitly saved .generic is
+        // preserved and flagged in Review instead of being changed underneath the
+        // operator.
+        productKeyMode = c.v(.productKeyMode, ProductKeyMode.firmware)
         acceptEULA = c.v(.acceptEULA, true)
+        activation = c.v(.activation, ActivationSpec())
     }
 }
 
@@ -857,6 +948,22 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         }
         if windows.productKeyMode == .custom && !SecretStore.has(id, slot: .productKey) {
             add("Product key mode is “Specific key” but no key is stored.", .windows)
+        }
+        // The pairing that leaves a technician activating by hand in Settings: a
+        // KMS client key installed with nothing to activate against. Worth saying
+        // out loud, because the machine images and boots perfectly and only shows
+        // its watermark once it is on someone's desk.
+        if windows.productKeyMode.needsKMSHost && windows.activation.mode != .kms {
+            add(
+                "The generic key is a KMS client key and never activates on its own — "
+                    + "Windows will show “Activate Windows”. Use the PC's built-in key, "
+                    + "or point Activation at a KMS host.",
+                .windows
+            )
+        }
+        if windows.activation.mode == .kms
+            && windows.activation.kmsHost.trimmingCharacters(in: .whitespaces).isEmpty {
+            add("Activation is set to use a KMS host but no host is set.", .windows)
         }
         if endUser.mode == .createLocalAccount {
             if endUser.username.trimmingCharacters(in: .whitespaces).isEmpty {

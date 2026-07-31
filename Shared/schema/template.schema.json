@@ -41,8 +41,21 @@
           "type": "integer",
           "description": "Overrides edition-name matching inside the install image."
         },
-        "productKeyMode": { "enum": ["none", "generic", "custom"], "default": "generic" },
-        "acceptEULA": { "type": "boolean", "default": true }
+        "productKeyMode": {
+          "enum": ["none", "firmware", "generic", "custom"],
+          "default": "firmware",
+          "description": "firmware writes no key at all, so Windows uses the OEM key in the PC's firmware (or its digital licence) and activates on its own. generic is a KMS client key: it selects the edition but only activates against a KMS host. The edition is pinned by image name either way."
+        },
+        "acceptEULA": { "type": "boolean", "default": true },
+        "activation": {
+          "type": "object",
+          "description": "What provisioning does about activation after Windows is up.",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["automatic", "kms", "skip"], "default": "automatic" },
+            "kmsHost": { "type": "string", "default": "" }
+          }
+        }
       }
     },
 

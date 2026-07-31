@@ -60,6 +60,11 @@ enum PayloadBuilder {
             var connectAutomatically: Bool
         }
 
+        struct Activation: Encodable {
+            var mode: String
+            var kmsHost: String
+        }
+
         struct Registry: Encodable {
             var path: String
             var name: String
@@ -101,6 +106,7 @@ enum PayloadBuilder {
             var supportURL: String
             var showProvisioningScreen: Bool
             var wifi: Wifi
+            var activation: Activation
             var registryTweaks: [Registry]
         }
 
@@ -340,6 +346,10 @@ enum PayloadBuilder {
                     security: system.wifi.security,
                     hidden: system.wifi.hidden,
                     connectAutomatically: system.wifi.connectAutomatically
+                ),
+                activation: Config.Activation(
+                    mode: template.windows.activation.mode.rawValue,
+                    kmsHost: template.windows.activation.kmsHost
                 ),
                 registryTweaks: system.registryTweaks
                     .filter { $0.enabled && !$0.name.isEmpty }

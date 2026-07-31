@@ -233,7 +233,12 @@ struct AnswerFileBuilder {
     private func userData() -> String {
         var key = ""
         switch template.windows.productKeyMode {
-        case .none:
+        // Both leave <ProductKey> out. Setup then falls back to the OEM key in the
+        // firmware's MSDM table, or to the machine's digital licence, and activates
+        // on its own. Writing a key here is what blocks that — the edition comes
+        // from /IMAGE/NAME in ImageInstall, never from the key, so dropping it
+        // costs nothing.
+        case .none, .firmware:
             key = ""
         case .generic:
             if let generic = template.windows.edition.genericKey(for: template.windows.release) {

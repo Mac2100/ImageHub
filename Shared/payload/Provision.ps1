@@ -187,6 +187,9 @@ function Set-Status {
 # Rough step count so the bar advances sensibly rather than sitting at zero.
 $script:StepTotal = 12 + @(Get-Setting $Config 'apps' @()).Count `
     + @(Get-Setting $Config 'scripts' @()).Count
+if ([string](Get-Setting (Get-Setting $System 'activation') 'mode' 'automatic') -ne 'skip') {
+    $script:StepTotal++
+}
 
 if (Get-Setting $System 'showProvisioningScreen' $true) {
     # The logo has to exist before the screen starts, so stage assets early.
@@ -372,7 +375,111 @@ if ($joinMode -eq 'workgroup') {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Regional and power settings
+# 3. Windows activation
+# ---------------------------------------------------------------------------
+
+$activation = Get-Setting $System 'activation'
+$activationMode = [string](Get-Setting $activation 'mode' 'automatic')
+
+<#
+    slmgr.vbs is the only supported way to install a key or trigger activation.
+    Under wscript it reports through a message box, which on an unattended run
+    means an invisible dialog nobody dismisses; cscript keeps everything on
+    stdout so it reaches the log instead.
+#>
+function Invoke-Slmgr {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+    $output = & "$env:SystemRoot\System32\cscript.exe" //Nologo `
+        "$env:SystemRoot\System32\slmgr.vbs" @Arguments 2>&1
+    $text = (($output | Where-Object { $_ -and $_.ToString().Trim() }) -join '; ')
+    # Logged here rather than at the call sites: Write-Log's -Message is a
+    # mandatory string, and a silent slmgr run would fail the binding.
+    if ($text) { Write-Log -Level INFO -Message $text }
+    return $text
+}
+
+<#
+    LicenseStatus 1 is "Licensed"; anything else leaves the watermark up. The
+    ApplicationID filter is the Windows product itself, so an Office licence on
+    the same machine cannot be mistaken for it.
+#>
+function Get-ActivationStatus {
+    try {
+        $windows = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
+            Where-Object {
+                $_.ApplicationID -eq '55c92734-d682-4d71-983e-d6ec3f16059f' -and
+                $_.PartialProductKey
+            } | Select-Object -First 1
+        if ($windows) { return [int]$windows.LicenseStatus }
+    } catch {
+        Write-Log -Level WARN -Message "Couldn't read the licence status: $($_.Exception.Message)"
+    }
+    return -1
+}
+
+if ($activationMode -eq 'skip') {
+    Write-Log -Level INFO -Message 'Activation is set to leave-alone; not touching it.'
+} else {
+    Invoke-Step 'Activating Windows' {
+        if ((Get-ActivationStatus) -eq 1) {
+            Write-Log -Level OK -Message 'Windows is already activated.'
+            return
+        }
+
+        # Wait for the network, but do not refuse to try without it: the check is
+        # an ICMP ping and plenty of corporate networks drop those while routing
+        # HTTPS fine. slmgr's own error is more trustworthy than this probe.
+        if (-not (Wait-ForNetwork -TimeoutSeconds 60)) {
+            Write-Log -Level WARN -Message 'No ping response; trying activation anyway.'
+        }
+
+        if ($activationMode -eq 'kms') {
+            $kmsHost = [string](Get-Setting $activation 'kmsHost' '')
+            if ([string]::IsNullOrWhiteSpace($kmsHost)) {
+                throw 'Activation is set to use a KMS host but no host was configured.'
+            }
+            Write-Log -Level INFO -Message "Pointing activation at KMS host $kmsHost."
+            Invoke-Slmgr @('/skms', $kmsHost) | Out-Null
+        } else {
+            # The OEM key lives in the firmware's ACPI MSDM table. Reinstalling it
+            # explicitly covers the case where the image was applied with a
+            # different key already in place, which is the usual reason a machine
+            # that shipped with Windows comes back unactivated.
+            $oemKey = ''
+            try {
+                $oemKey = [string](Get-CimInstance -ClassName SoftwareLicensingService `
+                    -ErrorAction Stop).OA3xOriginalProductKey
+            } catch {
+                Write-Log -Level WARN -Message "Couldn't read the firmware key: $($_.Exception.Message)"
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($oemKey)) {
+                Write-Log -Level INFO -Message 'Installing the OEM key from this PC firmware.'
+                Invoke-Slmgr @('/ipk', $oemKey) | Out-Null
+            } else {
+                Write-Log -Level INFO -Message 'No firmware key; relying on the digital licence.'
+            }
+        }
+
+        $result = Invoke-Slmgr @('/ato')
+
+        # /ato returns before the licence state settles on some machines.
+        $status = Get-ActivationStatus
+        for ($i = 0; $i -lt 6 -and $status -ne 1; $i++) {
+            Start-Sleep -Seconds 5
+            $status = Get-ActivationStatus
+        }
+
+        if ($status -eq 1) {
+            Write-Log -Level OK -Message 'Windows is activated.'
+        } else {
+            throw "Windows is still not activated (licence status $status). $result"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 4. Regional and power settings
 # ---------------------------------------------------------------------------
 
 $timeZone = Get-Setting $System 'timeZone'
@@ -408,7 +515,7 @@ Invoke-Step 'Applying power settings' {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Remote access
+# 5. Remote access
 # ---------------------------------------------------------------------------
 
 if (Get-Setting $System 'enableRemoteDesktop' $false) {
@@ -430,7 +537,7 @@ if (Get-Setting $System 'allowPing' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Desktop defaults - written into the default user hive so every account
+# 6. Desktop defaults - written into the default user hive so every account
 #    created from here on inherits them
 # ---------------------------------------------------------------------------
 
@@ -481,7 +588,7 @@ Invoke-Step 'Applying Explorer and shell defaults' {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Telemetry and consumer features
+# 7. Telemetry and consumer features
 # ---------------------------------------------------------------------------
 
 if (Get-Setting $System 'disableTelemetry' $true) {
@@ -517,7 +624,7 @@ if (Get-Setting $System 'disableConsumerFeatures' $true) {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Debloat
+# 8. Debloat
 # ---------------------------------------------------------------------------
 
 $bloatware = @(Get-Setting $System 'bloatware' @())
@@ -547,7 +654,7 @@ if ((Get-Setting $System 'removeBloatware' $true) -and $bloatware.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Optional Windows features
+# 9. Optional Windows features
 # ---------------------------------------------------------------------------
 
 $features = @(Get-Setting $System 'optionalFeatures' @())
@@ -566,7 +673,7 @@ if ($features.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 9. Applications
+# 10. Applications
 # ---------------------------------------------------------------------------
 
 function Resolve-Winget {
@@ -713,7 +820,7 @@ if ($apps.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 10. Branding
+# 11. Branding
 # ---------------------------------------------------------------------------
 
 $wallpaper = Get-Setting $System 'wallpaper' ''
@@ -815,7 +922,7 @@ if ($startLayout) {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Windows Update policy
+# 12. Windows Update policy
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Applying the Windows Update policy' {
@@ -852,7 +959,7 @@ if (Get-Setting $System 'installUpdates' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 12. Accounts
+# 13. Accounts
 # ---------------------------------------------------------------------------
 
 $endUserMode = Get-Setting $EndUser 'mode' 'leaveOOBE'
@@ -905,7 +1012,7 @@ if (Get-Setting $Admin 'passwordNeverExpires' $true) {
 }
 
 # ---------------------------------------------------------------------------
-# 13. Encryption
+# 14. Encryption
 # ---------------------------------------------------------------------------
 
 $bitLocker = Get-Setting $System 'bitLocker' 'off'
@@ -969,7 +1076,7 @@ if (Get-Setting $System 'disableRecoveryEnvironment' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 14. Registry tweaks from the template
+# 15. Registry tweaks from the template
 # ---------------------------------------------------------------------------
 
 $tweaks = @(Get-Setting $System 'registryTweaks' @())
@@ -989,7 +1096,7 @@ if ($tweaks.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 15. Custom scripts
+# 16. Custom scripts
 # ---------------------------------------------------------------------------
 
 function Invoke-CustomScripts {
@@ -1026,7 +1133,7 @@ function Invoke-CustomScripts {
 Invoke-CustomScripts -Phase 'provision'
 
 # ---------------------------------------------------------------------------
-# 16. Hide the admin account, if asked
+# 17. Hide the admin account, if asked
 # ---------------------------------------------------------------------------
 
 if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
@@ -1044,7 +1151,7 @@ if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
 Invoke-CustomScripts -Phase 'finalize'
 
 # ---------------------------------------------------------------------------
-# 17. Clean up secrets and report
+# 18. Clean up secrets and report
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Clearing staged credentials' {

@@ -284,9 +284,6 @@ struct TemplateEditorView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    SectionCaption(
-                        text: "Microsoft's public generic key for this edition. It selects the edition during Setup; activation still happens against your KMS host or MAK afterwards."
-                    )
                 }
                 if draft.windows.productKeyMode == .custom {
                     SecretPasswordField(
@@ -296,9 +293,27 @@ struct TemplateEditorView: View {
                         footer: "Written into autounattend.xml at build time"
                     )
                 }
+                SectionCaption(text: draft.windows.productKeyMode.detail)
                 Toggle("Accept the Windows licence terms automatically", isOn: $draft.windows.acceptEULA)
             } header: {
                 Text("Licensing")
+            }
+
+            Section {
+                Picker("Activate Windows", selection: $draft.windows.activation.mode) {
+                    ForEach(WindowsSpec.ActivationSpec.Mode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                if draft.windows.activation.mode == .kms {
+                    LabeledContent("KMS host") {
+                        TextField("kms.example.com:1688", text: $draft.windows.activation.kmsHost)
+                            .frame(maxWidth: 260)
+                    }
+                }
+                SectionCaption(text: draft.windows.activation.mode.detail)
+            } header: {
+                Text("Activation")
             }
 
             Section {
@@ -651,6 +666,7 @@ struct TemplateEditorView: View {
                     ? "None"
                     : draft.enabledApps.map { $0.displayName }.joined(separator: ", ")
             )
+            summaryRow("Licence", activationSummary)
             summaryRow("Time zone", draft.system.timeZone)
             if draft.system.removeBloatware {
                 summaryRow("Removes", "\(draft.system.bloatwareList.count) preinstalled apps")
@@ -666,6 +682,27 @@ struct TemplateEditorView: View {
             }
         }
         .glassCard()
+    }
+
+    /// Key source plus what provisioning does about activation, because those two
+    /// together decide whether the machine ends up wearing an "Activate Windows"
+    /// watermark on someone's desk.
+    private var activationSummary: String {
+        let key: String
+        switch draft.windows.productKeyMode {
+        case .firmware: key = "The PC's built-in key"
+        case .generic: key = "Generic KMS client key"
+        case .custom: key = "A key of your own"
+        case .none: key = "Setup asks for a key"
+        }
+        switch draft.windows.activation.mode {
+        case .automatic: return "\(key) · activates during provisioning"
+        case .kms:
+            let host = draft.windows.activation.kmsHost.isEmpty
+                ? "no host set" : draft.windows.activation.kmsHost
+            return "\(key) · activates against \(host)"
+        case .skip: return "\(key) · activation left alone"
+        }
     }
 
     /// One line describing where the image comes from, for the header row and

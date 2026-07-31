@@ -296,10 +296,32 @@ jobs:
               || { echo "::error::Shared/payload/${helper}.cmd is missing"; exit 1; }
           done
 
+          # A <ProductKey> in the answer file overrides the OEM key in the PC's
+          # firmware, which is what left machines showing "Activate Windows" until
+          # somebody opened Settings by hand. The default template must not write
+          # one; an operator choosing a MAK or KMS key is a separate, deliberate act.
+          if grep -q '<ProductKey>' /tmp/autounattend.xml; then
+            echo "::error::the default template writes a <ProductKey>, which blocks OEM activation"
+            exit 1
+          fi
+          echo "no product key in the default answer file, so the firmware key wins"
+
           # The payload config is what Provision.ps1 parses.
           "$BIN" --emit-payload-config > /tmp/config.json
           python3 -c "import json,sys; json.load(open('/tmp/config.json'))"
           echo "payload config is valid JSON"
+
+          # Provisioning's activation step reads this; a rename would silently
+          # turn activation off rather than fail.
+          python3 -c "
+          import json, sys
+          system = json.load(open('/tmp/config.json'))['system']
+          mode = system.get('activation', {}).get('mode')
+          if mode != 'automatic':
+              print(f'::error::payload config activation.mode is {mode!r}, expected \'automatic\'')
+              sys.exit(1)
+          print('payload config carries the activation settings')
+          "
 
       - name: Read app version
         id: version
