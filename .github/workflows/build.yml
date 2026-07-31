@@ -304,6 +304,24 @@ jobs:
           grep -q "JoinWifi.ps1" Shared/payload/Provision.ps1 \
             || { echo "::error::Provision.ps1 never references JoinWifi.ps1"; exit 1; }
 
+          # A machine came back with a staged payload, no provisioning and no logs
+          # at all, because Launch.cmd trusted schtasks and exited 0 in silence.
+          # Two properties stop that being possible again, and both are easy to
+          # undo by accident while editing batch.
+          grep -q 'launch.log' Shared/payload/Launch.cmd \
+            || { echo "::error::Launch.cmd no longer logs what it decided"; exit 1; }
+          grep -q 'provision-\*\.log' Shared/payload/Launch.cmd \
+            || { echo "::error::Launch.cmd no longer waits for proof that provisioning started"; exit 1; }
+          # RunOnce is the independent second trigger for a first logon that never
+          # runs FirstLogonCommands.
+          grep -q 'RunOnce' Shared/payload/Stage.cmd \
+            || { echo "::error::Stage.cmd no longer registers the RunOnce fallback"; exit 1; }
+          # The launch guard has to be a directory: mkdir is atomic, so two
+          # launchers firing together cannot both proceed.
+          grep -q 'mkdir "C:\\ImageHub\\.launched"' Shared/payload/Launch.cmd \
+            || { echo "::error::Launch.cmd's launch guard is no longer the atomic mkdir"; exit 1; }
+          echo "launcher chain has logging, proof-of-start, a second trigger and an atomic guard"
+
           # A <ProductKey> in the answer file overrides the OEM key in the PC's
           # firmware, which is what left machines showing "Activate Windows" until
           # somebody opened Settings by hand. The default template must not write
