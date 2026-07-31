@@ -901,7 +901,9 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         admin = c.v(.admin, AdminSpec())
         endUser = c.v(.endUser, EndUserSpec())
         identity = c.v(.identity, IdentitySpec())
-        apps = c.v(.apps, [])
+        // Templates keep the package ID they were created with, so a catalog
+        // correction has to be applied on the way in or it never reaches them.
+        apps = c.v(.apps, []).map(AppCatalog.correctingRenames)
         system = c.v(.system, SystemSpec())
         oobe = c.v(.oobe, OOBESpec())
         scripts = c.v(.scripts, [])

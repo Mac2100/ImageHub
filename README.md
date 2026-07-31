@@ -55,8 +55,12 @@ screen. No keystrokes in between.
   in a bare PowerShell console. Instead it shows a full-screen screen with your
   logo, organisation name, the current step and a progress bar. It runs as its own
   process polling a status file, so a ten-minute app install can't make it look
-  hung, and it can't slow provisioning down. Organisation name, logo and support
-  contact also land in Windows' OEM information, so they show in Settings → About.
+  hung, and it can't slow provisioning down. It holds the foreground against
+  installer popups and closes the Start menu if the shell puts it in the way, asks
+  for the end-user account inline when the template wants a technician to decide,
+  and finishes on an unmistakable completion state — badge, summary of what
+  happened, and confetti. Organisation name, logo and support contact also land in
+  Windows' OEM information, so they show in Settings → About.
 - **Custom PowerShell** — hooks in three phases (Setup `specialize`,
   provisioning, finalize) for anything the template can't express.
 - **Live build view** — eight stages with per-stage progress, a streaming log,

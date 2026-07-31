@@ -43,6 +43,10 @@ $LogFile = Join-Path $LogDirectory ("provision-{0:yyyyMMdd-HHmmss}.log" -f (Get-
 
 $script:Failures = @()
 $script:Warnings = @()
+# Counted so the finish screen can say what happened without anyone opening a log.
+$script:AppsInstalled = 0
+$script:AppsTotal = 0
+$script:AccountCreated = ''
 
 function Write-Log {
     param(
@@ -163,10 +167,13 @@ function Set-Status {
         [string]$Detail = '',
         [ValidateSet('running', 'done', 'failed')][string]$State = 'running',
         [string]$Note = '',
-        # Tells the progress screen to stop forcing itself in front, because
-        # something is asking the technician a question and the screen would
-        # otherwise sit on top of the dialog and hide it.
-        [switch]$Prompting
+        # Tells the progress screen to show its end-user account fields.
+        [switch]$Prompting,
+        # Seconds left before provisioning gives up waiting for those fields.
+        [int]$PromptRemaining = 0,
+        # Finish-screen lines: what happened, so the machine can be handed over
+        # without opening a log.
+        [string[]]$Summary = @()
     )
     try {
         [ordered]@{
@@ -174,6 +181,8 @@ function Set-Status {
             step             = $Step
             detail           = $Detail
             prompting        = [bool]$Prompting
+            promptRemaining  = $PromptRemaining
+            summary          = @($Summary)
             index            = $script:StepIndex
             total            = $script:StepTotal
             organizationName = [string](Get-Setting $System 'organizationName' '')
@@ -299,12 +308,62 @@ $sharedKey
     </MSM>
 </WLANProfile>
 "@
+        <#
+            Everything below used to end in "| Out-Null", so the step reported
+            "profile added and connection requested" whether netsh had succeeded
+            or refused outright -- and a run that never joined the network looked
+            identical in the log to one that did. Keep the output, check it, and
+            confirm the association rather than assuming it.
+        #>
         $profilePath = Join-Path $env:TEMP 'imagehub-wifi.xml'
         Set-Content -LiteralPath $profilePath -Value $profileXml -Encoding UTF8
-        & netsh.exe wlan add profile filename="$profilePath" user=all | Out-Null
+        $added = & netsh.exe wlan add profile filename="$profilePath" user=all 2>&1
         Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
-        & netsh.exe wlan connect name="$ssid" | Out-Null
-        Write-Log -Level OK -Message "Wi-Fi profile added and connection requested."
+        $addedText = (($added | Where-Object { "$_".Trim() }) -join '; ')
+        if ($LASTEXITCODE -ne 0) {
+            throw "netsh refused the profile: $addedText"
+        }
+        Write-Log -Level OK -Message "Profile stored: $addedText"
+
+        # No wireless adapter at all is worth saying plainly. It is the normal
+        # case on a desktop, and it is not a failure.
+        $interfaces = & netsh.exe wlan show interfaces 2>&1
+        if ($LASTEXITCODE -ne 0 -or -not ($interfaces -match 'Name\s*:')) {
+            Write-Log -Level WARN -Message ('No wireless adapter is present, so the profile ' +
+                'is stored but nothing will connect until one is.')
+            return
+        }
+
+        $connect = & netsh.exe wlan connect name="$ssid" 2>&1
+        $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
+        Write-Log -Level INFO -Message "Connect requested: $connectText"
+
+        <#
+            Association takes a few seconds, and on a machine that is already on
+            Ethernet Windows is in no hurry about it. Poll rather than declare
+            victory: "State : connected" against our SSID is the only thing that
+            actually means joined.
+        #>
+        $joined = $false
+        for ($attempt = 0; $attempt -lt 15; $attempt++) {
+            Start-Sleep -Seconds 2
+            $state = & netsh.exe wlan show interfaces 2>&1
+            $stateText = ($state -join ' ')
+            if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($ssid)) {
+                $joined = $true
+                break
+            }
+        }
+
+        if ($joined) {
+            Write-Log -Level OK -Message "Connected to $ssid."
+        } else {
+            $current = (($state | Where-Object { "$_" -match 'State\s*:|SSID\s*:' }) -join '; ')
+            throw ("Stored the profile for $ssid but the adapter did not join within 30s. " +
+                "Adapter now: $current. If this machine is on Ethernet, Windows may " +
+                'simply not have bothered - the profile is saved and will be used when ' +
+                'the cable comes out.')
+        }
     }
 }
 
@@ -624,9 +683,31 @@ Invoke-Step 'Applying Explorer and shell defaults' {
                 "default profiles ($applied value(s)).")
         }
     } finally {
+        <#
+            reg unload is refused while PowerShell still holds a handle on the
+            hive we just wrote to, and the refusal used to escape this finally
+            block -- turning a step that had done its job into
+            "Applying Explorer and shell defaults failed: ERROR: Access is
+            denied." on top of the warning it had already logged correctly.
+
+            cmd.exe swallows reg's stderr so it cannot become a PowerShell error
+            record, the collect-and-retry gives the handles time to go, and a
+            hive that still will not unload is a warning, never a failure.
+        #>
         if ($loaded) {
-            [gc]::Collect()
-            & reg.exe unload 'HKU\ImageHubDefault' 2>$null | Out-Null
+            $unloaded = $false
+            $unloadOutput = ''
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+                [gc]::Collect()
+                [gc]::WaitForPendingFinalizers()
+                $unloadOutput = & cmd.exe /c 'reg.exe unload HKU\ImageHubDefault 2>&1'
+                if ($LASTEXITCODE -eq 0) { $unloaded = $true; break }
+                Start-Sleep -Milliseconds 400
+            }
+            if (-not $unloaded) {
+                Write-Log -Level WARN -Message ('Left the default user hive loaded: ' +
+                    "$unloadOutput. It unloads by itself at the next restart.")
+            }
         }
     }
 }
@@ -766,6 +847,7 @@ if ($apps.Count -gt 0) {
     }
 
     Write-Log -Level STEP -Message "Installing $($apps.Count) application(s)"
+    $script:AppsTotal = $apps.Count
     $appNumber = 0
     foreach ($app in $apps) {
         $name = Get-Setting $app 'name' 'Unnamed app'
@@ -903,6 +985,7 @@ if ($apps.Count -gt 0) {
                 }
                 default { throw "Unknown app source '$source'." }
             }
+            $script:AppsInstalled++
         } catch {
             $message = "$name did not install: $($_.Exception.Message)"
             Write-Log -Level FAIL -Message $message
@@ -1068,178 +1151,97 @@ if ($endUserMode -eq 'createLocalAccount') {
     }
 } elseif ($endUserMode -eq 'promptAtFirstBoot') {
     <#
-        Read-Host used to ask for these. It cannot work here: provisioning runs as
-        a scheduled task so its console is not the window the technician is looking
-        at, and the progress screen is deliberately always-on-top. The prompt was
-        invisible and unanswerable, so the run stopped dead and stayed there.
+        The fields are asked for on the progress screen itself, not in a dialog
+        of our own.
 
-        A WinForms dialog is visible, focusable, prefilled from the template's User
-        options, and - the part that matters most - it gives up after a while
-        instead of waiting forever.
+        Read-Host was the first attempt and could not work: provisioning runs as
+        a scheduled task, so its console is not the window the technician is
+        looking at. A WinForms dialog was the second, and it worked -- but only
+        by making the progress screen stand down while it was up, at which point
+        every Lenovo and installer popup on the machine came forward and covered
+        the dialog instead. Splash.ps1 owns the fields now, so the screen can
+        stay in front the whole way through and there is nothing to fight.
+
+        The contract is one file: Splash.ps1 writes answer.json, this waits for
+        it, reads it once and deletes it.
     #>
-    function Show-EndUserDialog {
-        param(
-            [string]$Username = '',
-            [string]$FullName = '',
-            [bool]$Administrator = $false,
-            [bool]$MustChangePassword = $true,
-            [int]$TimeoutMinutes = 15
-        )
+    Invoke-Step 'Creating the end-user account' {
+        $answerPath = Join-Path $Root 'answer.json'
+        Remove-Item -LiteralPath $answerPath -Force -ErrorAction SilentlyContinue
 
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-
-        $form = New-Object System.Windows.Forms.Form
-        $form.Text = 'Set up the end-user account'
-        $form.Size = New-Object System.Drawing.Size(460, 400)
-        $form.StartPosition = 'CenterScreen'
-        $form.FormBorderStyle = 'FixedDialog'
-        $form.MaximizeBox = $false
-        $form.MinimizeBox = $false
-        $form.TopMost = $true
-
-        function New-Row {
-            param([string]$Text, [switch]$Password)
-            $label = New-Object System.Windows.Forms.Label
-            $label.Text = $Text
-            $label.Location = New-Object System.Drawing.Point(18, $script:DialogY)
-            $label.Size = New-Object System.Drawing.Size(400, 18)
-            $form.Controls.Add($label)
-
-            $box = New-Object System.Windows.Forms.TextBox
-            $box.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 20))
-            $box.Size = New-Object System.Drawing.Size(410, 24)
-            if ($Password) { $box.UseSystemPasswordChar = $true }
-            $form.Controls.Add($box)
-
-            $script:DialogY += 54
-            return $box
+        if (-not $script:SplashProcess) {
+            throw ('The progress screen is turned off for this template, so there is ' +
+                'nowhere to ask for the account. Turn the screen on, or set the ' +
+                'account in the template instead of asking at first boot.')
         }
 
-        $script:DialogY = 18
-        $userBox = New-Row 'Username for the person receiving this machine'
-        $userBox.Text = $Username
-        $nameBox = New-Row 'Full name (optional)'
-        $nameBox.Text = $FullName
-        $passBox = New-Row 'Password' -Password
-        $confirmBox = New-Row 'Confirm password' -Password
+        $timeoutMinutes = [int](Get-Setting $EndUser 'promptTimeoutMinutes' 15)
+        if ($timeoutMinutes -lt 1) { $timeoutMinutes = 15 }
+        $deadline = (Get-Date).AddMinutes($timeoutMinutes)
 
-        $adminBox = New-Object System.Windows.Forms.CheckBox
-        $adminBox.Text = 'Make this account an administrator'
-        $adminBox.Location = New-Object System.Drawing.Point(18, $script:DialogY)
-        $adminBox.Size = New-Object System.Drawing.Size(410, 22)
-        $adminBox.Checked = $Administrator
-        $form.Controls.Add($adminBox)
-
-        $changeBox = New-Object System.Windows.Forms.CheckBox
-        $changeBox.Text = 'Must change password at first sign-in'
-        $changeBox.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 24))
-        $changeBox.Size = New-Object System.Drawing.Size(410, 22)
-        $changeBox.Checked = $MustChangePassword
-        $form.Controls.Add($changeBox)
-
-        $errorLabel = New-Object System.Windows.Forms.Label
-        $errorLabel.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 52))
-        $errorLabel.Size = New-Object System.Drawing.Size(410, 20)
-        $errorLabel.ForeColor = [System.Drawing.Color]::Firebrick
-        $form.Controls.Add($errorLabel)
-
-        $countdownLabel = New-Object System.Windows.Forms.Label
-        $countdownLabel.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 78))
-        $countdownLabel.Size = New-Object System.Drawing.Size(250, 20)
-        $countdownLabel.ForeColor = [System.Drawing.Color]::DimGray
-        $form.Controls.Add($countdownLabel)
-
-        $okButton = New-Object System.Windows.Forms.Button
-        $okButton.Text = 'Create account'
-        $okButton.Location = New-Object System.Drawing.Point(268, ($script:DialogY + 76))
-        $okButton.Size = New-Object System.Drawing.Size(160, 30)
-        $form.Controls.Add($okButton)
-        $form.AcceptButton = $okButton
-
-        $script:DialogResultData = $null
-        $okButton.add_Click({
-            $errorLabel.Text = ''
-            if ([string]::IsNullOrWhiteSpace($userBox.Text)) {
-                $errorLabel.Text = 'A username is required.'
-                return
-            }
-            if ($passBox.Text -ne $confirmBox.Text) {
-                $errorLabel.Text = 'The passwords do not match.'
-                return
-            }
-            $script:DialogResultData = @{
-                username   = $userBox.Text.Trim()
-                fullName   = $nameBox.Text.Trim()
-                password   = $passBox.Text
-                admin      = [bool]$adminBox.Checked
-                mustChange = [bool]$changeBox.Checked
-            }
-            $form.Close()
-        })
-
-        # Never wait forever. A machine that finishes with one warning beats a
-        # machine that sits on a hidden question until somebody notices.
-        $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-        $ticker = New-Object System.Windows.Forms.Timer
-        $ticker.Interval = 1000
-        $ticker.add_Tick({
-            $left = [int]([Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
-            if ($left -le 0) {
-                $ticker.Stop()
-                $form.Close()
-                return
-            }
-            $countdownLabel.Text = ("Continues without an account in {0}:{1:D2}" -f [int]($left / 60), ($left % 60))
-        })
-        $ticker.Start()
-
-        $form.add_Shown({ $form.Activate(); $userBox.Focus() | Out-Null })
-        [void]$form.ShowDialog()
-        $ticker.Stop()
-        $ticker.Dispose()
-        $form.Dispose()
-        return $script:DialogResultData
-    }
-
-    Invoke-Step 'Creating the end-user account' {
         $answer = $null
-        # The progress screen stands down while the dialog is up, then takes the
-        # foreground back.
-        Set-Status -Step 'Waiting for the end-user account details' -Prompting
         try {
-            # Deliberately not seeded from the template. In this mode the account
-            # is the technician's call at the machine, and prefilling it with a
-            # leftover name from when the template pre-created accounts would be
-            # worse than an empty box. The dialog's own defaults apply: no
-            # administrator, must change password at first sign-in.
-            $answer = Show-EndUserDialog `
-                -TimeoutMinutes ([int](Get-Setting $EndUser 'promptTimeoutMinutes' 15))
+            while ((Get-Date) -lt $deadline) {
+                if (Test-Path -LiteralPath $answerPath) {
+                    # Give the writer a moment to finish flushing before parsing.
+                    Start-Sleep -Milliseconds 250
+                    try {
+                        $answer = Get-Content -LiteralPath $answerPath -Raw | ConvertFrom-Json
+                    } catch {
+                        Write-Log -Level WARN -Message "Couldn't read the account details: $($_.Exception.Message)"
+                    }
+                    break
+                }
+
+                # The countdown belongs on the screen, so it is recomputed here and
+                # handed over with every status write.
+                $remaining = [int][Math]::Ceiling((($deadline - (Get-Date)).TotalSeconds))
+                Set-Status -Step 'Waiting for the end-user account details' `
+                    -Prompting -PromptRemaining $remaining
+
+                # If the screen has died there is no one left to answer.
+                try {
+                    if ($script:SplashProcess.HasExited) {
+                        throw 'The progress screen closed before the account details were entered.'
+                    }
+                } catch [System.InvalidOperationException] { }
+
+                Start-Sleep -Seconds 1
+            }
         } finally {
+            Remove-Item -LiteralPath $answerPath -Force -ErrorAction SilentlyContinue
             Set-Status -Step 'Creating the end-user account'
         }
 
         if ($null -eq $answer) {
-            throw ('No end-user details were entered, so no account was created. ' +
-                'Create one in Settings, or set the account in the template instead ' +
-                'of asking at first boot.')
+            throw ("Nobody entered the account details within $timeoutMinutes minute(s), " +
+                'so no account was created. Create one in Settings, or set the account ' +
+                'in the template instead of asking at first boot.')
         }
 
-        $parameters = @{ Name = $answer.username }
-        if ([string]::IsNullOrEmpty($answer.password)) {
+        $username = [string](Get-Setting $answer 'username' '')
+        if ([string]::IsNullOrWhiteSpace($username)) {
+            throw 'The account details came through without a username.'
+        }
+        $plainPassword = [string](Get-Setting $answer 'password' '')
+
+        $parameters = @{ Name = $username }
+        if ([string]::IsNullOrEmpty($plainPassword)) {
             $parameters['NoPassword'] = $true
         } else {
-            $parameters['Password'] = (ConvertTo-SecureString $answer.password -AsPlainText -Force)
+            $parameters['Password'] = (ConvertTo-SecureString $plainPassword -AsPlainText -Force)
         }
-        if ($answer.fullName) { $parameters['FullName'] = $answer.fullName }
+        $fullName = [string](Get-Setting $answer 'fullName' '')
+        if ($fullName) { $parameters['FullName'] = $fullName }
         New-LocalUser @parameters -ErrorAction Stop | Out-Null
 
-        $group = if ($answer.admin) { 'Administrators' } else { 'Users' }
-        Add-LocalGroupMember -Group $group -Member $answer.username -ErrorAction SilentlyContinue
-        if ($answer.mustChange -and $answer.password) {
-            & net.exe user $answer.username /logonpasswordchg:yes | Out-Null
+        $group = if ([bool](Get-Setting $answer 'admin' $false)) { 'Administrators' } else { 'Users' }
+        Add-LocalGroupMember -Group $group -Member $username -ErrorAction SilentlyContinue
+        if ([bool](Get-Setting $answer 'mustChange' $true) -and $plainPassword) {
+            & net.exe user $username /logonpasswordchg:yes | Out-Null
         }
-        Write-Log -Level OK -Message "Created $($answer.username) in $group."
+        $script:AccountCreated = $username
+        Write-Log -Level OK -Message "Created $username in $group."
     }
 }
 
@@ -1401,6 +1403,9 @@ Invoke-Step 'Clearing staged credentials' {
     # passwords in clear text. Both are removed now that they've been consumed.
     foreach ($path in @(
         (Join-Path $Root 'config.json'),
+        # Normally consumed and deleted the moment it is read; listed here in case
+        # a run was interrupted between the write and the read.
+        (Join-Path $Root 'answer.json'),
         'C:\Windows\Panther\unattend.xml',
         'C:\Windows\Panther\unattend\unattend.xml',
         'C:\Windows\System32\Sysprep\unattend.xml'
@@ -1452,10 +1457,29 @@ Write-Host ''
 
 Write-Log "Provisioning complete. Failures: $($script:Failures.Count), warnings: $($script:Warnings.Count)."
 
+<#
+    What the finish screen shows. Deliberately the handful of facts a technician
+    would otherwise go digging in the log for before handing a machine over.
+#>
+$summaryLines = @()
+$summaryLines += "Computer name: " + $(if ($desiredName) { "$desiredName (after restart)" } else { $env:COMPUTERNAME })
+if ($script:AppsTotal -gt 0) {
+    $summaryLines += "Applications: $($script:AppsInstalled) of $($script:AppsTotal) installed"
+}
+if ($script:AccountCreated) {
+    $summaryLines += "Account created: $($script:AccountCreated)"
+} elseif ($endUserMode -eq 'promptAtFirstBoot') {
+    $summaryLines += 'Account created: none'
+}
+if ($script:Warnings.Count -gt 0) {
+    $summaryLines += "$($script:Warnings.Count) warning(s) - full detail in C:\ImageHub\logs"
+}
+
 $script:StepIndex = $script:StepTotal
 Set-Status `
     -Step 'Finished' `
     -State $(if ($script:Failures.Count -gt 0) { 'failed' } else { 'done' }) `
+    -Summary $summaryLines `
     -Note ([string](Get-Setting $EndUser 'welcomeNote' ''))
 
 # The progress screen is full-screen and on top, so a console prompt behind it

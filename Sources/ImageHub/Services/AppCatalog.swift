@@ -17,6 +17,27 @@ enum AppCatalog {
         }
     }
 
+    /// winget package IDs that have changed since a template might have stored one.
+    ///
+    /// A template records the ID it was created with, so correcting the catalog
+    /// does nothing for templates already on disk — they keep installing a package
+    /// that no longer exists. Slack made this concrete: the catalog was fixed to
+    /// `SlackTechnologies.Slack` two releases before a real run was still sending
+    /// `Slack.Slack` and failing with "No package found matching input criteria".
+    static let renamedPackageIDs: [String: String] = [
+        "Slack.Slack": "SlackTechnologies.Slack",
+    ]
+
+    /// Rewrites a stored selection whose package ID has since been renamed.
+    static func correctingRenames(_ selection: AppSelection) -> AppSelection {
+        guard selection.source == .winget,
+              let corrected = renamedPackageIDs[selection.packageID]
+        else { return selection }
+        var updated = selection
+        updated.packageID = corrected
+        return updated
+    }
+
     static let entries: [Entry] = [
         // Browsers
         Entry(id: "Google.Chrome", name: "Google Chrome", category: "Browsers"),
