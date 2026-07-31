@@ -182,7 +182,6 @@ function New-Caption {
 # Logo, or nothing at all when the template has none.
 $logoBox = New-Object System.Windows.Forms.PictureBox
 $logoBox.SizeMode = 'Zoom'
-$logoBox.BackColor = [System.Drawing.Color]::Transparent
 $logoPath = Get-Field $status 'logo' ''
 if ($logoPath -and (Test-Path -LiteralPath $logoPath)) {
     try {
@@ -212,8 +211,18 @@ $title.Text = if ($organization) {
 #>
 $script:BadgeMode = 'good'
 $badge = New-Object System.Windows.Forms.Panel
-$badge.BackColor = [System.Drawing.Color]::Transparent
+<#
+    Opaque and double-buffered, both on purpose.
+
+    A Transparent BackColor makes WinForms re-composite the parent's background
+    into this panel on every paint, and the confetti timer invalidates the whole
+    form thirty times a second -- so the tick flickered for as long as the
+    confetti ran. An opaque panel has nothing to re-composite, and the square it
+    covers is the banner colour anyway.
+#>
 $badge.Visible = $false
+$badge.GetType().GetProperty('DoubleBuffered',
+    [System.Reflection.BindingFlags]'Instance,NonPublic').SetValue($badge, $true, $null)
 $badge.add_Paint({
     $g = $_.Graphics
     $g.SmoothingMode = 'AntiAlias'
@@ -724,6 +733,7 @@ $timer.add_Tick({
         $script:Mode = 'finished'
 
         $form.BackColor = if ($bad) { $bannerBad } else { $bannerGood }
+        $badge.BackColor = $form.BackColor
         $stepLabel.ForeColor = [System.Drawing.Color]::White
         $footer.ForeColor = [System.Drawing.Color]::FromArgb(224, 236, 228)
 

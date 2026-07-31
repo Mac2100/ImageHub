@@ -53,38 +53,34 @@ struct BuildSheet: View {
         .padding(14)
     }
 
+    /// The footer has to live in a view that observes the job.
+    ///
+    /// It used to be built inline here, and this view only re-renders when
+    /// `appState` publishes — which happens twice per build, when `activeJob` is
+    /// set and when it is cleared. The job's own `phase` changing published
+    /// nothing this view was watching, so "Erase & Build" stayed on screen for the
+    /// entire build while the progress list beside it — a separate view that does
+    /// take the job as `@ObservedObject` — updated normally.
+    @ViewBuilder
     private var footerBar: some View {
-        HStack(spacing: 10) {
-            if let job = displayedJob, job.isRunning {
-                Button("Cancel Build", role: .destructive) { job.cancel() }
-                Spacer()
-                Text(job.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            } else if let job = displayedJob, !job.isRunning, job.phase != .idle {
-                Button("Copy Log") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(job.logText, forType: .string)
-                    ToastCenter.shared.show("Build log copied")
-                }
-                Spacer()
-                Button("Done") { finish() }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
+        Group {
+            if let job = displayedJob {
+                BuildFooterBar(job: job, onDone: finish)
             } else {
-                Button("Cancel") { dismiss() }
-                Spacer()
-                if let problem = blockingProblem {
-                    Text(problem)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .lineLimit(2)
-                        .frame(maxWidth: 340, alignment: .trailing)
+                HStack(spacing: 10) {
+                    Button("Cancel") { dismiss() }
+                    Spacer()
+                    if let problem = blockingProblem {
+                        Text(problem)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .lineLimit(2)
+                            .frame(maxWidth: 340, alignment: .trailing)
+                    }
+                    Button("Erase & Build") { showingConfirmation = true }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(blockingProblem != nil)
                 }
-                Button("Erase & Build") { showingConfirmation = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(blockingProblem != nil)
             }
         }
         .padding(14)
@@ -340,6 +336,41 @@ struct BuildSheet: View {
         confirmed = false
         appState.buildSheetTemplateID = nil
         dismiss()
+    }
+}
+
+// MARK: - Footer
+
+/// Observes the job so the buttons track its phase.
+///
+/// A job whose phase is still `.idle` is one that was created a moment ago and is
+/// about to start, so it counts as running here — showing "Erase & Build" at that
+/// point invites a second click on a build that is already under way.
+private struct BuildFooterBar: View {
+    @ObservedObject var job: BuildJob
+    let onDone: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if job.isRunning || job.phase == .idle {
+                Button("Cancel Build", role: .destructive) { job.cancel() }
+                Spacer()
+                Text(job.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else {
+                Button("Copy Log") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(job.logText, forType: .string)
+                    ToastCenter.shared.show("Build log copied")
+                }
+                Spacer()
+                Button("Done", action: onDone)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
     }
 }
 

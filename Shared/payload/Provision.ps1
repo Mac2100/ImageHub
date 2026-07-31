@@ -256,6 +256,79 @@ if ($script:IsElevated) {
 # 1. Network - first, because everything else may need it
 # ---------------------------------------------------------------------------
 
+<#
+    Hands the Wi-Fi profile to a scheduled task for later.
+
+    Needed because netsh cannot store a profile with no wireless interface
+    present, and on a freshly imaged laptop the Wi-Fi driver typically arrives
+    from Windows Update well after provisioning has finished. JoinWifi.ps1 waits
+    for the interface, joins, and removes both the file and itself once it works.
+
+    The profile XML carries the passphrase, so it is written DPAPI-protected under
+    the machine key and with an ACL that admits only SYSTEM and Administrators.
+    That is weaker than never writing it at all -- a local administrator can still
+    unprotect it -- but it is the price of joining a network whose driver does not
+    exist yet, and the file is deleted the moment the join succeeds.
+#>
+function Register-DeferredWifiJoin {
+    param(
+        [Parameter(Mandatory)][string]$Ssid,
+        [Parameter(Mandatory)][string]$ProfileXml
+    )
+
+    $joinScript = Join-Path $Root 'JoinWifi.ps1'
+    if (-not (Test-Path -LiteralPath $joinScript)) {
+        Write-Log -Level WARN -Message "JoinWifi.ps1 is missing from $Root, so Wi-Fi cannot be deferred."
+        return $false
+    }
+
+    try {
+        $stateDirectory = 'C:\ProgramData\ImageHub'
+        New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
+        $blob = Join-Path $stateDirectory 'wifi.bin'
+
+        Add-Type -AssemblyName System.Security -ErrorAction Stop
+        $protected = [System.Security.Cryptography.ProtectedData]::Protect(
+            [System.Text.Encoding]::UTF8.GetBytes($ProfileXml),
+            $null,
+            [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+        [System.IO.File]::WriteAllBytes($blob, $protected)
+
+        # Well-known SIDs rather than names, which are localised.
+        $acl = New-Object System.Security.AccessControl.FileSecurity
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {
+            $account = New-Object System.Security.Principal.SecurityIdentifier ($sid)
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $account, 'FullControl', 'Allow')))
+        }
+        Set-Acl -LiteralPath $blob -AclObject $acl
+
+        $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+            -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' +
+                $joinScript + '" -Ssid "' + $Ssid + '"')
+        # At logon and at startup: whichever comes first after the driver lands.
+        $triggers = @((New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -AtStartup))
+        # LogonType ServiceAccount is required for SYSTEM; without it registration
+        # asks for a password that does not exist.
+        $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' `
+            -LogonType ServiceAccount -RunLevel Highest
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+            -DontStopIfGoingOnBatteries -StartWhenAvailable `
+            -ExecutionTimeLimit ([TimeSpan]::FromHours(1))
+
+        Register-ScheduledTask -TaskName 'ImageHubJoinWifi' -Action $action -Trigger $triggers `
+            -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+
+        Write-Log -Level OK -Message ("Registered ImageHubJoinWifi; it will join $Ssid once a " +
+            'wireless interface exists.')
+        return $true
+    } catch {
+        Write-Log -Level WARN -Message "Couldn't defer the Wi-Fi join: $($_.Exception.Message)"
+        return $false
+    }
+}
+
 $wifi = Get-Setting $System 'wifi'
 if ((Get-Setting $wifi 'enabled' $false) -and (Get-Setting $wifi 'ssid')) {
     Invoke-Step "Adding Wi-Fi profile '$($wifi.ssid)'" {
@@ -338,6 +411,31 @@ $sharedKey
                 "profile can be stored: $($_.Exception.Message)")
         }
 
+        <#
+            Check for an interface BEFORE trying to store anything: netsh wlan
+            refuses every operation when there is none, including "add profile",
+            with "There is no wireless interface on the system."
+
+            On a freshly imaged laptop that is usually not a missing adapter but a
+            missing driver -- Windows has not fetched the Wi-Fi driver from Windows
+            Update yet, and provisioning runs long before it does. Failing here
+            would mean the profile never gets stored at all, so instead the work is
+            handed to a scheduled task that waits for the interface to turn up.
+        #>
+        $interfaces = & netsh.exe wlan show interfaces 2>&1
+        $hasInterface = ($LASTEXITCODE -eq 0) -and ($interfaces -match 'Name\s*:')
+
+        if (-not $hasInterface) {
+            $deferred = Register-DeferredWifiJoin -Ssid $ssid -ProfileXml $profileXml
+            if ($deferred) {
+                throw ("No wireless interface exists yet - usually the Wi-Fi driver has " +
+                    "not arrived from Windows Update. $ssid will be joined automatically " +
+                    'once it does; a scheduled task now waits for it. Nothing else to do.')
+            }
+            throw ('No wireless interface exists yet and the deferred join could not be ' +
+                "registered, so $ssid was not configured.")
+        }
+
         $profilePath = Join-Path $env:TEMP 'imagehub-wifi.xml'
         Set-Content -LiteralPath $profilePath -Value $profileXml -Encoding UTF8
         $added = & netsh.exe wlan add profile filename="$profilePath" user=all 2>&1
@@ -347,15 +445,6 @@ $sharedKey
             throw "netsh refused the profile: $addedText"
         }
         Write-Log -Level OK -Message "Profile stored: $addedText"
-
-        # No wireless adapter at all is worth saying plainly. It is the normal
-        # case on a desktop, and it is not a failure.
-        $interfaces = & netsh.exe wlan show interfaces 2>&1
-        if ($LASTEXITCODE -ne 0 -or -not ($interfaces -match 'Name\s*:')) {
-            Write-Log -Level WARN -Message ('No wireless adapter is present, so the profile ' +
-                'is stored but nothing will connect until one is.')
-            return
-        }
 
         $connect = & netsh.exe wlan connect name="$ssid" 2>&1
         $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')

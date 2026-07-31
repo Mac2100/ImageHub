@@ -296,6 +296,14 @@ jobs:
               || { echo "::error::Shared/payload/${helper}.cmd is missing"; exit 1; }
           done
 
+          # Provision.ps1 schedules JoinWifi.ps1 by path when a machine has no
+          # wireless interface yet. A missing file would only surface on a
+          # technician's bench, and only on the machines that need it most.
+          test -f "Shared/payload/JoinWifi.ps1" \
+            || { echo "::error::Shared/payload/JoinWifi.ps1 is missing"; exit 1; }
+          grep -q "JoinWifi.ps1" Shared/payload/Provision.ps1 \
+            || { echo "::error::Provision.ps1 never references JoinWifi.ps1"; exit 1; }
+
           # A <ProductKey> in the answer file overrides the OEM key in the PC's
           # firmware, which is what left machines showing "Activate Windows" until
           # somebody opened Settings by hand. The default template must not write
