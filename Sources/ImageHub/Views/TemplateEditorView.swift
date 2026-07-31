@@ -464,16 +464,14 @@ struct TemplateEditorView: View {
                     Toggle("Administrator", isOn: $draft.endUser.administrator)
                     Toggle("Must change password at first sign-in", isOn: $draft.endUser.mustChangePassword)
                 case .promptAtFirstBoot:
-                    // These are the values the on-screen prompt opens with. The
-                    // technician can change any of them; leaving them blank just
-                    // means an empty dialog.
-                    TextField("Suggested username", text: $draft.endUser.username)
-                    TextField("Suggested display name", text: $draft.endUser.displayName)
-                    Toggle("Administrator", isOn: $draft.endUser.administrator)
-                    Toggle("Must change password at first sign-in", isOn: $draft.endUser.mustChangePassword)
+                    // Username, display name, Administrator and must-change belong
+                    // on the first-boot dialog, not here — the whole point of this
+                    // mode is that the technician decides them at the machine. The
+                    // only thing the template gets a say in is how long to wait.
                     LabeledContent("Give up after") {
                         HStack(spacing: 6) {
-                            TextField("15", value: $draft.endUser.promptTimeoutMinutes, format: .number)
+                            TextField("", value: $draft.endUser.promptTimeoutMinutes, format: .number)
+                                .labelsHidden()
                                 .frame(width: 60)
                             Text("minutes")
                                 .font(.caption)
@@ -481,7 +479,7 @@ struct TemplateEditorView: View {
                         }
                     }
                     SectionCaption(
-                        text: "Provisioning shows a dialog asking for the account details, prefilled with whatever you set above. If nobody answers within the time limit it carries on without creating the account and says so on the finish screen — it never waits indefinitely."
+                        text: "Provisioning shows a dialog on the machine asking for the username, display name, password, whether the account is an administrator, and whether the password must be changed at first sign-in. If nobody answers within the time limit it carries on without creating the account and says so on the finish screen — it never waits indefinitely."
                     )
                 }
 

@@ -1208,11 +1208,12 @@ if ($endUserMode -eq 'createLocalAccount') {
         # foreground back.
         Set-Status -Step 'Waiting for the end-user account details' -Prompting
         try {
+            # Deliberately not seeded from the template. In this mode the account
+            # is the technician's call at the machine, and prefilling it with a
+            # leftover name from when the template pre-created accounts would be
+            # worse than an empty box. The dialog's own defaults apply: no
+            # administrator, must change password at first sign-in.
             $answer = Show-EndUserDialog `
-                -Username ([string](Get-Setting $EndUser 'username' '')) `
-                -FullName ([string](Get-Setting $EndUser 'displayName' '')) `
-                -Administrator ([bool](Get-Setting $EndUser 'administrator' $false)) `
-                -MustChangePassword ([bool](Get-Setting $EndUser 'mustChangePassword' $true)) `
                 -TimeoutMinutes ([int](Get-Setting $EndUser 'promptTimeoutMinutes' 15))
         } finally {
             Set-Status -Step 'Creating the end-user account'
