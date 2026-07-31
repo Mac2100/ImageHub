@@ -108,7 +108,13 @@
         "displayName": { "type": "string", "default": "" },
         "administrator": { "type": "boolean", "default": false },
         "mustChangePassword": { "type": "boolean", "default": true },
-        "welcomeNote": { "type": "string", "default": "" }
+        "welcomeNote": { "type": "string", "default": "" },
+        "promptTimeoutMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 15,
+          "description": "How long the promptAtFirstBoot dialog waits for a technician before provisioning carries on without creating the account. Never unbounded."
+        }
       }
     },
 

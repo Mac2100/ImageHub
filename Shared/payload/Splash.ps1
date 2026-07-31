@@ -228,8 +228,17 @@ $timer.add_Tick({
     # Installers, the Lenovo Fn popup and the taskbar all steal foreground during
     # a run, and TopMost set once at creation does not survive that. Re-asserting
     # each tick is cheap and keeps the screen genuinely in front.
-    if (-not $form.TopMost) { $form.TopMost = $true }
-    $form.BringToFront()
+    #
+    # The exception is a question for the technician. Winning the foreground race
+    # against our own dialog would hide it behind this screen, and provisioning
+    # would then wait on an answer nobody can see -- which is exactly how a run
+    # sat on "Creating the end-user account" for fifteen minutes.
+    if ([bool](Get-Field $current 'prompting' $false)) {
+        if ($form.TopMost) { $form.TopMost = $false }
+    } else {
+        if (-not $form.TopMost) { $form.TopMost = $true }
+        $form.BringToFront()
+    }
 
     if ($state -eq 'done' -or $state -eq 'failed') {
         $timer.Stop()

@@ -292,6 +292,10 @@ struct EndUserSpec: Codable, Equatable, Hashable {
     var mustChangePassword: Bool = true
     /// Shown on first boot so whoever receives the machine knows what to do.
     var welcomeNote: String = ""
+    /// How long the first-boot prompt waits before giving up and letting
+    /// provisioning finish. Never unbounded: a dialog nobody answers used to
+    /// stop the whole run indefinitely.
+    var promptTimeoutMinutes: Int = 15
 
     enum Mode: String, Codable, CaseIterable, Identifiable, Hashable {
         /// Let the person who receives the machine complete Windows OOBE themselves.
@@ -323,6 +327,7 @@ struct EndUserSpec: Codable, Equatable, Hashable {
         administrator = c.v(.administrator, false)
         mustChangePassword = c.v(.mustChangePassword, true)
         welcomeNote = c.v(.welcomeNote, "")
+        promptTimeoutMinutes = max(1, c.v(.promptTimeoutMinutes, 15))
     }
 }
 

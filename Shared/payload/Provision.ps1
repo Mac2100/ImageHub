@@ -162,13 +162,18 @@ function Set-Status {
         [string]$Step,
         [string]$Detail = '',
         [ValidateSet('running', 'done', 'failed')][string]$State = 'running',
-        [string]$Note = ''
+        [string]$Note = '',
+        # Tells the progress screen to stop forcing itself in front, because
+        # something is asking the technician a question and the screen would
+        # otherwise sit on top of the dialog and hide it.
+        [switch]$Prompting
     )
     try {
         [ordered]@{
             state            = $State
             step             = $Step
             detail           = $Detail
+            prompting        = [bool]$Prompting
             index            = $script:StepIndex
             total            = $script:StepTotal
             organizationName = [string](Get-Setting $System 'organizationName' '')
@@ -554,31 +559,70 @@ Invoke-Step 'Applying Explorer and shell defaults' {
     $targets = @('HKCU:')
     if ($loaded) { $targets += 'Registry::HKU\ImageHubDefault' }
 
+    <#
+        Each value is attempted on its own. The whole step used to be one
+        try-block, so the first refusal threw and every remaining tweak was
+        skipped -- one unwritable key silently cost the machine all of its shell
+        defaults. Collect the failures and report them instead.
+    #>
+    function Set-ShellValue {
+        param([string]$Path, [string]$Name, $Value, [string]$Type = 'DWord')
+        try {
+            Set-RegistryValue -Path $Path -Name $Name -Value $Value -Type $Type
+            $script:ShellApplied++
+        } catch {
+            $script:ShellRefused += "$Name at $Path ($($_.Exception.Message))"
+        }
+    }
+    $script:ShellApplied = 0
+    $script:ShellRefused = @()
+
     try {
         foreach ($base in $targets) {
             $advanced = "$base\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
             if (Get-Setting $System 'showFileExtensions' $true) {
-                Set-RegistryValue -Path $advanced -Name 'HideFileExt' -Value 0
+                Set-ShellValue $advanced 'HideFileExt' 0
             }
             if (Get-Setting $System 'showHiddenFiles' $false) {
-                Set-RegistryValue -Path $advanced -Name 'Hidden' -Value 1
+                Set-ShellValue $advanced 'Hidden' 1
             }
             if (Get-Setting $System 'taskbarAlignLeft' $false) {
-                Set-RegistryValue -Path $advanced -Name 'TaskbarAl' -Value 0
+                Set-ShellValue $advanced 'TaskbarAl' 0
             }
             if (Get-Setting $System 'disableWidgets' $false) {
-                Set-RegistryValue -Path $advanced -Name 'TaskbarDa' -Value 0
+                Set-ShellValue $advanced 'TaskbarDa' 0
             }
             if (Get-Setting $System 'classicContextMenu' $false) {
                 $clsid = "$base\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
-                Set-RegistryValue -Path $clsid -Name '(Default)' -Value '' -Type String
-            }
-            if (Get-Setting $System 'disableWebSearch' $false) {
-                Set-RegistryValue -Path "$base\Software\Policies\Microsoft\Windows\Explorer" `
-                    -Name 'DisableSearchBoxSuggestions' -Value 1
+                Set-ShellValue $clsid '(Default)' '' 'String'
             }
         }
-        Write-Log -Level OK -Message "Shell defaults applied to the current and default profiles."
+
+        <#
+            DisableSearchBoxSuggestions is a *policy* value, and HKCU\Software\
+            Policies is read-only to the logged-on user however elevated the
+            process is -- writing it threw "Attempted to perform an unauthorized
+            operation" and took the rest of this step down with it. The machine
+            hive is the correct place for it and covers every account anyway.
+        #>
+        if (Get-Setting $System 'disableWebSearch' $false) {
+            Set-ShellValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' `
+                'DisableSearchBoxSuggestions' 1
+            if ($loaded) {
+                Set-ShellValue 'Registry::HKU\ImageHubDefault\Software\Policies\Microsoft\Windows\Explorer' `
+                    'DisableSearchBoxSuggestions' 1
+            }
+        }
+
+        $applied = $script:ShellApplied
+        $refused = @($script:ShellRefused)
+        if ($refused.Count -gt 0) {
+            Write-Log -Level WARN -Message ("Shell defaults: $applied value(s) applied, " +
+                "$($refused.Count) refused - " + ($refused -join '; '))
+        } else {
+            Write-Log -Level OK -Message ("Shell defaults applied to the current and " +
+                "default profiles ($applied value(s)).")
+        }
     } finally {
         if ($loaded) {
             [gc]::Collect()
@@ -758,6 +802,30 @@ if ($apps.Count -gt 0) {
                         # instead of making someone open the log to find out.
                         $reason = @($output | Where-Object { "$_".Trim() } | Select-Object -Last 3)
                         $detail = if ($reason) { ' - ' + ($reason -join ' / ') } else { '' }
+
+                        <#
+                            -1978335212 is "No package found matching input
+                            criteria" -- the package ID in the catalog is simply
+                            wrong. Guessing the correct one from a Mac has already
+                            failed twice, so ask winget: search by display name and
+                            log the candidate IDs. The next log then contains the
+                            answer instead of another guess.
+                        #>
+                        if ($LASTEXITCODE -eq -1978335212) {
+                            try {
+                                $found = & $winget search --name $name --source winget `
+                                    --accept-source-agreements 2>&1
+                                Write-Log -Level WARN -Message ("No winget package '" +
+                                    [string](Get-Setting $app 'packageID') +
+                                    "'. Searching for '$name' instead:")
+                                $found | Select-Object -First 12 | ForEach-Object {
+                                    Add-Content -LiteralPath $LogFile -Value "      $_"
+                                }
+                            } catch {
+                                Write-Log -Level WARN -Message "winget search also failed: $($_.Exception.Message)"
+                            }
+                        }
+
                         throw "winget exited with $LASTEXITCODE$detail"
                     }
                     Write-Log -Level OK -Message "$name installed."
@@ -975,29 +1043,178 @@ if ($endUserMode -eq 'createLocalAccount') {
         }
     }
 } elseif ($endUserMode -eq 'promptAtFirstBoot') {
-    Invoke-Step 'Creating the end-user account' {
-        Write-Host ''
-        Write-Host '  End-user account' -ForegroundColor White
-        $username = Read-Host '  Username for the person receiving this machine'
-        if ([string]::IsNullOrWhiteSpace($username)) {
-            throw 'No username entered; skipping account creation.'
-        }
-        $fullName = Read-Host '  Full name (optional)'
-        $password = Read-Host '  Password' -AsSecureString
+    <#
+        Read-Host used to ask for these. It cannot work here: provisioning runs as
+        a scheduled task so its console is not the window the technician is looking
+        at, and the progress screen is deliberately always-on-top. The prompt was
+        invisible and unanswerable, so the run stopped dead and stayed there.
 
-        $parameters = @{
-            Name     = $username
-            Password = $password
+        A WinForms dialog is visible, focusable, prefilled from the template's User
+        options, and - the part that matters most - it gives up after a while
+        instead of waiting forever.
+    #>
+    function Show-EndUserDialog {
+        param(
+            [string]$Username = '',
+            [string]$FullName = '',
+            [bool]$Administrator = $false,
+            [bool]$MustChangePassword = $true,
+            [int]$TimeoutMinutes = 15
+        )
+
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = 'Set up the end-user account'
+        $form.Size = New-Object System.Drawing.Size(460, 400)
+        $form.StartPosition = 'CenterScreen'
+        $form.FormBorderStyle = 'FixedDialog'
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $false
+        $form.TopMost = $true
+
+        function New-Row {
+            param([string]$Text, [switch]$Password)
+            $label = New-Object System.Windows.Forms.Label
+            $label.Text = $Text
+            $label.Location = New-Object System.Drawing.Point(18, $script:DialogY)
+            $label.Size = New-Object System.Drawing.Size(400, 18)
+            $form.Controls.Add($label)
+
+            $box = New-Object System.Windows.Forms.TextBox
+            $box.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 20))
+            $box.Size = New-Object System.Drawing.Size(410, 24)
+            if ($Password) { $box.UseSystemPasswordChar = $true }
+            $form.Controls.Add($box)
+
+            $script:DialogY += 54
+            return $box
         }
-        if ($fullName) { $parameters['FullName'] = $fullName }
+
+        $script:DialogY = 18
+        $userBox = New-Row 'Username for the person receiving this machine'
+        $userBox.Text = $Username
+        $nameBox = New-Row 'Full name (optional)'
+        $nameBox.Text = $FullName
+        $passBox = New-Row 'Password' -Password
+        $confirmBox = New-Row 'Confirm password' -Password
+
+        $adminBox = New-Object System.Windows.Forms.CheckBox
+        $adminBox.Text = 'Make this account an administrator'
+        $adminBox.Location = New-Object System.Drawing.Point(18, $script:DialogY)
+        $adminBox.Size = New-Object System.Drawing.Size(410, 22)
+        $adminBox.Checked = $Administrator
+        $form.Controls.Add($adminBox)
+
+        $changeBox = New-Object System.Windows.Forms.CheckBox
+        $changeBox.Text = 'Must change password at first sign-in'
+        $changeBox.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 24))
+        $changeBox.Size = New-Object System.Drawing.Size(410, 22)
+        $changeBox.Checked = $MustChangePassword
+        $form.Controls.Add($changeBox)
+
+        $errorLabel = New-Object System.Windows.Forms.Label
+        $errorLabel.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 52))
+        $errorLabel.Size = New-Object System.Drawing.Size(410, 20)
+        $errorLabel.ForeColor = [System.Drawing.Color]::Firebrick
+        $form.Controls.Add($errorLabel)
+
+        $countdownLabel = New-Object System.Windows.Forms.Label
+        $countdownLabel.Location = New-Object System.Drawing.Point(18, ($script:DialogY + 78))
+        $countdownLabel.Size = New-Object System.Drawing.Size(250, 20)
+        $countdownLabel.ForeColor = [System.Drawing.Color]::DimGray
+        $form.Controls.Add($countdownLabel)
+
+        $okButton = New-Object System.Windows.Forms.Button
+        $okButton.Text = 'Create account'
+        $okButton.Location = New-Object System.Drawing.Point(268, ($script:DialogY + 76))
+        $okButton.Size = New-Object System.Drawing.Size(160, 30)
+        $form.Controls.Add($okButton)
+        $form.AcceptButton = $okButton
+
+        $script:DialogResultData = $null
+        $okButton.add_Click({
+            $errorLabel.Text = ''
+            if ([string]::IsNullOrWhiteSpace($userBox.Text)) {
+                $errorLabel.Text = 'A username is required.'
+                return
+            }
+            if ($passBox.Text -ne $confirmBox.Text) {
+                $errorLabel.Text = 'The passwords do not match.'
+                return
+            }
+            $script:DialogResultData = @{
+                username   = $userBox.Text.Trim()
+                fullName   = $nameBox.Text.Trim()
+                password   = $passBox.Text
+                admin      = [bool]$adminBox.Checked
+                mustChange = [bool]$changeBox.Checked
+            }
+            $form.Close()
+        })
+
+        # Never wait forever. A machine that finishes with one warning beats a
+        # machine that sits on a hidden question until somebody notices.
+        $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+        $ticker = New-Object System.Windows.Forms.Timer
+        $ticker.Interval = 1000
+        $ticker.add_Tick({
+            $left = [int]([Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
+            if ($left -le 0) {
+                $ticker.Stop()
+                $form.Close()
+                return
+            }
+            $countdownLabel.Text = ("Continues without an account in {0}:{1:D2}" -f [int]($left / 60), ($left % 60))
+        })
+        $ticker.Start()
+
+        $form.add_Shown({ $form.Activate(); $userBox.Focus() | Out-Null })
+        [void]$form.ShowDialog()
+        $ticker.Stop()
+        $ticker.Dispose()
+        $form.Dispose()
+        return $script:DialogResultData
+    }
+
+    Invoke-Step 'Creating the end-user account' {
+        $answer = $null
+        # The progress screen stands down while the dialog is up, then takes the
+        # foreground back.
+        Set-Status -Step 'Waiting for the end-user account details' -Prompting
+        try {
+            $answer = Show-EndUserDialog `
+                -Username ([string](Get-Setting $EndUser 'username' '')) `
+                -FullName ([string](Get-Setting $EndUser 'displayName' '')) `
+                -Administrator ([bool](Get-Setting $EndUser 'administrator' $false)) `
+                -MustChangePassword ([bool](Get-Setting $EndUser 'mustChangePassword' $true)) `
+                -TimeoutMinutes ([int](Get-Setting $EndUser 'promptTimeoutMinutes' 15))
+        } finally {
+            Set-Status -Step 'Creating the end-user account'
+        }
+
+        if ($null -eq $answer) {
+            throw ('No end-user details were entered, so no account was created. ' +
+                'Create one in Settings, or set the account in the template instead ' +
+                'of asking at first boot.')
+        }
+
+        $parameters = @{ Name = $answer.username }
+        if ([string]::IsNullOrEmpty($answer.password)) {
+            $parameters['NoPassword'] = $true
+        } else {
+            $parameters['Password'] = (ConvertTo-SecureString $answer.password -AsPlainText -Force)
+        }
+        if ($answer.fullName) { $parameters['FullName'] = $answer.fullName }
         New-LocalUser @parameters -ErrorAction Stop | Out-Null
 
-        $group = if (Get-Setting $EndUser 'administrator' $false) { 'Administrators' } else { 'Users' }
-        Add-LocalGroupMember -Group $group -Member $username -ErrorAction SilentlyContinue
-        if (Get-Setting $EndUser 'mustChangePassword' $true) {
-            & net.exe user $username /logonpasswordchg:yes | Out-Null
+        $group = if ($answer.admin) { 'Administrators' } else { 'Users' }
+        Add-LocalGroupMember -Group $group -Member $answer.username -ErrorAction SilentlyContinue
+        if ($answer.mustChange -and $answer.password) {
+            & net.exe user $answer.username /logonpasswordchg:yes | Out-Null
         }
-        Write-Log -Level OK -Message "Created $username in $group."
+        Write-Log -Level OK -Message "Created $($answer.username) in $group."
     }
 }
 

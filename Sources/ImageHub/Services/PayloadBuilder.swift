@@ -32,6 +32,7 @@ enum PayloadBuilder {
             var administrator: Bool
             var mustChangePassword: Bool
             var welcomeNote: String
+            var promptTimeoutMinutes: Int
         }
 
         struct Identity: Encodable {
@@ -298,7 +299,8 @@ enum PayloadBuilder {
                 displayName: template.endUser.displayName,
                 administrator: template.endUser.administrator,
                 mustChangePassword: template.endUser.mustChangePassword,
-                welcomeNote: template.endUser.welcomeNote
+                welcomeNote: template.endUser.welcomeNote,
+                promptTimeoutMinutes: template.endUser.promptTimeoutMinutes
             ),
             identity: Config.Identity(
                 joinMode: template.identity.joinMode.rawValue,

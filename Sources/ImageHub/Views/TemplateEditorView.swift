@@ -464,8 +464,24 @@ struct TemplateEditorView: View {
                     Toggle("Administrator", isOn: $draft.endUser.administrator)
                     Toggle("Must change password at first sign-in", isOn: $draft.endUser.mustChangePassword)
                 case .promptAtFirstBoot:
+                    // These are the values the on-screen prompt opens with. The
+                    // technician can change any of them; leaving them blank just
+                    // means an empty dialog.
+                    TextField("Suggested username", text: $draft.endUser.username)
+                    TextField("Suggested display name", text: $draft.endUser.displayName)
+                    Toggle("Administrator", isOn: $draft.endUser.administrator)
+                    Toggle("Must change password at first sign-in", isOn: $draft.endUser.mustChangePassword)
+                    LabeledContent("Give up after") {
+                        HStack(spacing: 6) {
+                            TextField("15", value: $draft.endUser.promptTimeoutMinutes, format: .number)
+                                .frame(width: 60)
+                            Text("minutes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     SectionCaption(
-                        text: "Provisioning pauses and asks the technician for a username and password, then creates the account. Useful when one template serves many people."
+                        text: "Provisioning shows a dialog asking for the account details, prefilled with whatever you set above. If nobody answers within the time limit it carries on without creating the account and says so on the finish screen — it never waits indefinitely."
                     )
                 }
 
