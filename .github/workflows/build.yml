@@ -363,6 +363,27 @@ jobs:
           print(f"office config installs {product.get('ID')} silently")
           PY3
 
+          # Windows/Check-CatalogIDs.ps1 embeds the catalog's package IDs so it can
+          # run standalone on a Windows machine. Embedded means it can drift, and a
+          # drifted checker is worse than none: it would report an ID as fine that
+          # the catalog no longer ships, or miss one it does.
+          python3 - <<'PY4'
+          import re, sys
+          swift = open('Sources/ImageHub/Services/AppCatalog.swift').read()
+          catalog = re.findall(r'Entry\(id: "([^"]+)"', swift)
+          script = open('Windows/Check-CatalogIDs.ps1', encoding='utf-8-sig').read()
+          listed = re.findall(r"'([^']+)'", script[script.index('$ids = @('):script.index(')\n\nif')])
+          missing = [i for i in catalog if i not in listed]
+          extra = [i for i in listed if i not in catalog]
+          if missing:
+              print(f'::error::Check-CatalogIDs.ps1 is missing {missing}')
+          if extra:
+              print(f'::error::Check-CatalogIDs.ps1 lists IDs no longer in the catalog: {extra}')
+          if missing or extra:
+              sys.exit(1)
+          print(f'catalog checker covers all {len(catalog)} package IDs')
+          PY4
+
           # The payload config is what Provision.ps1 parses.
           "$BIN" --emit-payload-config > /tmp/config.json
           python3 -c "import json,sys; json.load(open('/tmp/config.json'))"
