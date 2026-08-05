@@ -320,8 +320,27 @@ function Register-DeferredWifiJoin {
         Register-ScheduledTask -TaskName 'ImageHubJoinWifi' -Action $action -Trigger $triggers `
             -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
 
-        Write-Log -Level OK -Message ("Registered ImageHubJoinWifi; it will join $Ssid once a " +
-            'wireless interface exists.')
+        <#
+            Start it now as well as registering it.
+
+            Both triggers are already in the past by the time we get here: the task
+            is created during provisioning, which is itself running at first logon,
+            and the machine started well before that. So nothing would have fired
+            until somebody next signed in or rebooted -- a machine could sit there
+            all afternoon with the driver installed and the task waiting for an
+            event that had already happened. Starting it means it begins its wait
+            immediately, which is the window where Windows Update actually delivers
+            the driver.
+        #>
+        try {
+            Start-ScheduledTask -TaskName 'ImageHubJoinWifi' -ErrorAction Stop
+            Write-Log -Level OK -Message ("Registered and started ImageHubJoinWifi; it will join " +
+                "$Ssid as soon as a wireless interface exists, and again at the next logon or " +
+                'restart if the driver takes longer than that.')
+        } catch {
+            Write-Log -Level OK -Message ("Registered ImageHubJoinWifi (couldn't start it now: " +
+                "$($_.Exception.Message)); it will join $Ssid at the next logon or restart.")
+        }
         return $true
     } catch {
         Write-Log -Level WARN -Message "Couldn't defer the Wi-Fi join: $($_.Exception.Message)"
@@ -628,25 +647,36 @@ function Invoke-Slmgr {
 }
 
 <#
-    LicenseStatus 1 is "Licensed"; anything else leaves the watermark up. The
-    ApplicationID filter is the Windows product itself, so an Office licence on
-    the same machine cannot be mistaken for it.
+    Answers one question: is Windows licensed?
 
-    Deliberately out-of-process and time-limited: see Invoke-Bounded. Returns 1
-    for licensed, -1 for "read it but not licensed", and -2 for "could not read
-    it", which the caller treats as a reason to stop asking.
+    It used to ask a subtly different one -- "what is the status of the first
+    Windows SKU that has a product key?" -- and got it wrong on a machine that
+    activated perfectly. SoftwareLicensingProduct holds an instance per SKU, and a
+    machine that has had more than one key installed over its life has more than
+    one carrying a PartialProductKey. Select-Object -First 1 then picks whichever
+    WMI happens to return first, which on that run was a stale unlicensed entry:
+    slmgr reported "Product activated successfully" and this reported status -1
+    for two and a half minutes until the deadline gave up.
+
+    Asking whether *any* keyed Windows SKU is licensed has no such ordering
+    dependence. The child also prints a word rather than a number, so parsing
+    cannot turn stray output into a plausible-looking status.
+
+    Deliberately out-of-process and time-limited: see Invoke-Bounded.
 #>
-function Get-ActivationStatus {
-    $script = @'
+function Get-ActivationState {
+    $probe = @'
 try {
-  $p = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
-    Where-Object { $_.ApplicationID -eq "55c92734-d682-4d71-983e-d6ec3f16059f" -and $_.PartialProductKey } |
-    Select-Object -First 1
-  if ($p) { [int]$p.LicenseStatus } else { -1 }
-} catch { -1 }
+  $licensed = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
+    Where-Object {
+      $_.ApplicationID -eq "55c92734-d682-4d71-983e-d6ec3f16059f" -and
+      $_.PartialProductKey -and $_.LicenseStatus -eq 1
+    }
+  if ($licensed) { "LICENSED" } else { "NOTLICENSED" }
+} catch { "UNREADABLE" }
 '@
     # EncodedCommand sidesteps every layer of quoting between here and the child.
-    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($probe))
     $result = Invoke-Bounded `
         -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
         -Arguments "-NoProfile -EncodedCommand $encoded" -TimeoutSeconds 60
@@ -654,19 +684,18 @@ try {
     if ($result.TimedOut) {
         Write-Log -Level WARN -Message ('Reading the licence status timed out. The Software ' +
             'Protection service is usually wedged on a machine with no internet.')
-        return -2
+        return 'unreadable'
     }
-
-    $value = 0
-    if ([int]::TryParse(($result.Output -replace '[^0-9\-]', ''), [ref]$value)) { return $value }
-    return -1
+    if ($result.Output -match 'LICENSED' -and $result.Output -notmatch 'NOTLICENSED') { return 'licensed' }
+    if ($result.Output -match 'NOTLICENSED') { return 'notlicensed' }
+    return 'unreadable'
 }
 
 if ($activationMode -eq 'skip') {
     Write-Log -Level INFO -Message 'Activation is set to leave-alone; not touching it.'
 } else {
     Invoke-Step 'Activating Windows' {
-        if ((Get-ActivationStatus) -eq 1) {
+        if ((Get-ActivationState) -eq 'licensed') {
             Write-Log -Level OK -Message 'Windows is already activated.'
             return
         }
@@ -721,19 +750,29 @@ try {
         $result = Invoke-Slmgr @('/ato')
 
         <#
-            /ato returns before the licence state settles on some machines, so the
-            state is polled -- but against a deadline, and abandoning the poll the
-            moment the query itself stops answering. -2 means the read timed out;
-            asking again would only wait again.
+            slmgr's own word first. It is the thing that performed the activation,
+            so when it says the product activated there is nothing to poll for --
+            and disbelieving it is exactly how a successful activation came to be
+            reported as a failure.
         #>
-        $deadline = (Get-Date).AddMinutes(2)
-        $status = Get-ActivationStatus
-        while ($status -ne 1 -and $status -ne -2 -and (Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds 5
-            $status = Get-ActivationStatus
+        if ($result -match 'successfully') {
+            Write-Log -Level OK -Message 'Windows is activated.'
+            return
         }
 
-        if ($status -eq 1) {
+        <#
+            Otherwise poll, because /ato can return before the licence state
+            settles -- but against a deadline, and abandoning the poll the moment
+            the read stops answering, since asking again would only wait again.
+        #>
+        $deadline = (Get-Date).AddMinutes(2)
+        $state = Get-ActivationState
+        while ($state -eq 'notlicensed' -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 5
+            $state = Get-ActivationState
+        }
+
+        if ($state -eq 'licensed') {
             Write-Log -Level OK -Message 'Windows is activated.'
             return
         }
@@ -747,7 +786,7 @@ try {
                 'itself once the machine is online. Plug in Ethernet or wait for Wi-Fi.')
         }
 
-        throw "Windows is still not activated (licence status $status). $result"
+        throw "Windows is not activated ($state). $result"
     }
 }
 
