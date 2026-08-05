@@ -371,10 +371,12 @@ struct Microsoft365Spec: Codable, Equatable, Hashable {
     /// Never installed by the Deployment Tool, and never offered as a choice.
     ///
     /// Teams and OneDrive are here because something else already owns them, and
-    /// letting Office install its own copy is how a machine ends up with two.
-    /// Teams comes from the app catalog's `Microsoft.Teams`, which is the current
-    /// Teams client and installs reliably; the copy Office would lay down is the
-    /// retired one. OneDrive ships inbox with Windows 11.
+    /// letting Office install its own copy is how a machine ends up with two. Teams
+    /// comes from the app catalog's `Microsoft.Teams`, which is the current client
+    /// and installs reliably; the copy Office would lay down is the retired one.
+    /// OneDrive ships inbox with Windows 11 and is in the catalog as
+    /// `Microsoft.OneDrive` for anyone who wants it installed or updated
+    /// explicitly — so excluding it here removes a duplicate, not a capability.
     ///
     /// Groove is the retired OneDrive for Business client, Lync is Skype for
     /// Business, and Bing is the search hijacker nobody has ever asked for.

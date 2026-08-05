@@ -36,6 +36,14 @@ enum AppCatalog {
     /// old ID.
     static let officePackageID = "Microsoft.Office"
 
+    /// Packages that no longer exist to install.
+    ///
+    /// Microsoft retired consumer Skype in May 2025, so the entry could only ever
+    /// fail now. Dropped from a template on load for the same reason it is gone
+    /// from the catalog: a step that cannot succeed is not worth a warning, it is
+    /// worth removing. (The inbox Skype app is separately in the debloat list.)
+    static let retiredPackageIDs: Set<String> = ["Microsoft.Skype"]
+
     /// Moves a template off the winget Office package and onto the Deployment Tool.
     ///
     /// The intent either way was "install Office", and one of the two routes
@@ -45,6 +53,8 @@ enum AppCatalog {
         apps: inout [AppSelection],
         office: inout Microsoft365Spec
     ) {
+        apps.removeAll { $0.source == .winget && retiredPackageIDs.contains($0.packageID) }
+
         let matches = apps.filter { $0.source == .winget && $0.packageID == officePackageID }
         guard !matches.isEmpty else { return }
         apps.removeAll { $0.source == .winget && $0.packageID == officePackageID }
@@ -125,6 +135,8 @@ enum AppCatalog {
         Entry(id: "WireGuard.WireGuard", name: "WireGuard", category: "Security"),
 
         // Productivity
+        Entry(id: "Microsoft.OneDrive", name: "OneDrive", category: "Productivity",
+              note: "Windows 11 preinstalls it; add this to install or update the sync client explicitly"),
         Entry(id: "Google.GoogleDrive", name: "Google Drive", category: "Productivity"),
         Entry(id: "Dropbox.Dropbox", name: "Dropbox", category: "Productivity"),
         Entry(id: "Adobe.Acrobat.Reader.32-bit", name: "Acrobat Reader (32-bit)", category: "Productivity"),
@@ -135,7 +147,6 @@ enum AppCatalog {
         Entry(id: "Mozilla.Thunderbird", name: "Thunderbird", category: "Productivity"),
 
         // Communication
-        Entry(id: "Microsoft.Skype", name: "Skype", category: "Communication"),
         Entry(id: "Cisco.Webex", name: "Webex", category: "Communication"),
         Entry(id: "GoTo.GoToMeeting", name: "GoTo Meeting", category: "Communication"),
         Entry(id: "RingCentral.RingCentral", name: "RingCentral", category: "Communication"),
