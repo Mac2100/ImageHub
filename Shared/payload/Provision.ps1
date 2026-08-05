@@ -1278,10 +1278,49 @@ if ([bool](Get-Setting $office 'enabled' $false)) {
             throw "The Office configuration is missing from the payload: $configuration"
         }
 
-        # Office comes down from Microsoft's CDN, so no network means no install.
-        # Say that plainly rather than letting setup.exe fail with a bare code.
-        if (-not (Wait-ForNetwork -TimeoutSeconds 60)) {
-            Write-Log -Level WARN -Message 'No ping response; attempting the Office install anyway.'
+        <#
+            A bundled source means the install needs no internet at all, so there is
+            nothing to wait for. Without one, Office streams several GB from
+            Microsoft's CDN and a machine with no network cannot install it -- say
+            that plainly rather than letting setup.exe fail with a bare code.
+        #>
+        $bundled = [string](Get-Setting $office 'source' '')
+        $bundledPath = ''
+        if ($bundled) { $bundledPath = Join-Path $Root $bundled }
+
+        if ($bundledPath -and (Test-Path -LiteralPath $bundledPath)) {
+            Write-Log -Level INFO -Message "Installing from the bundled Office source at $bundledPath."
+
+            <#
+                configuration.xml was generated with SourcePath=C:\ImageHub\Office,
+                which is where Stage.cmd puts the payload. If this run is working
+                from the media instead -- staging never got the chance -- that path
+                does not exist and the attribute has to follow reality.
+            #>
+            $expected = 'C:\ImageHub\Office'
+            $actual = Split-Path -Parent $bundledPath
+            if ($actual -ne $expected) {
+                try {
+                    $xml = Get-Content -LiteralPath $configuration -Raw
+                    $patched = $xml -replace [regex]::Escape('SourcePath="' + $expected + '"'),
+                        ('SourcePath="' + $actual + '"')
+                    if ($patched -ne $xml) {
+                        Set-Content -LiteralPath $configuration -Value $patched -Encoding UTF8
+                        Write-Log -Level INFO -Message "Repointed the Office source to $actual."
+                    }
+                } catch {
+                    Write-Log -Level WARN -Message ('Could not repoint the Office source: ' +
+                        "$($_.Exception.Message). AllowCdnFallback means it will download instead.")
+                }
+            }
+        } else {
+            if ($bundled) {
+                Write-Log -Level WARN -Message ('The bundled Office source is missing from the ' +
+                    'payload, so Office will download from Microsoft instead.')
+            }
+            if (-not (Wait-ForNetwork -TimeoutSeconds 60)) {
+                Write-Log -Level WARN -Message 'No ping response; attempting the Office install anyway.'
+            }
         }
 
         $product = [string](Get-Setting $office 'product' 'Office')

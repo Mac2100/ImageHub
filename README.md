@@ -49,7 +49,10 @@ screen. No keystrokes in between.
   instead: point ImageHub at the Deployment Tool's `setup.exe` once, pick the
   product, channel, architecture and which apps to leave out, and it generates
   `configuration.xml` **at build time** — so a mistake surfaces on your Mac, not on
-  a bench — and bundles both onto the drive.
+  a bench — and bundles both onto the drive. Optionally bundle the Office payload
+  itself too (run `setup.exe /download` once on any Windows box) and the install
+  needs no internet at all; leave it out and Office streams from Microsoft's CDN
+  during provisioning instead.
 - **System configuration** — time zone and locale, power plan, Remote Desktop,
   Explorer and taskbar defaults written to the *default user profile*, telemetry
   and consumer-feature policies, AppX debloat list, optional Windows features,

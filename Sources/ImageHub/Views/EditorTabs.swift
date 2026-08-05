@@ -932,6 +932,34 @@ struct Microsoft365Section: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                    LabeledContent("Office source") {
+                        HStack(spacing: 8) {
+                            Text(sourceLabel)
+                                .font(.callout)
+                                .foregroundStyle(office.sourcePath.isEmpty ? .secondary : .primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("Choose folder…") { chooseSource() }
+                                .controlSize(.small)
+                            if !office.sourcePath.isEmpty {
+                                Button("Clear") { office.sourcePath = "" }
+                                    .controlSize(.small)
+                            }
+                        }
+                    }
+                    Text(
+                        """
+                        Optional, and the difference between needing internet and not. On any \
+                        Windows machine run “setup.exe /download configuration.xml” once — it \
+                        writes an Office\\Data folder beside itself — then point here at the \
+                        folder that contains Office. ImageHub copies it onto the drive and \
+                        Office installs from there, fully offline. It adds several GB to every \
+                        build, so leave it empty if the machines are always wired up.
+                        """
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                     Divider()
 
                     Picker("Product", selection: $office.product) {
@@ -986,13 +1014,23 @@ struct Microsoft365Section: View {
                 }
                 .glassCard()
 
-                NoticeBanner(
-                    kind: .info,
-                    title: "Office downloads itself during provisioning",
-                    messages: [
-                        "The Deployment Tool fetches several GB from Microsoft's CDN, so the machine needs internet at first boot and this step is the longest in a run."
-                    ]
-                )
+                if office.sourcePath.isEmpty {
+                    NoticeBanner(
+                        kind: .info,
+                        title: "Office downloads itself during provisioning",
+                        messages: [
+                            "The Deployment Tool fetches several GB from Microsoft's CDN, so the machine needs internet at first boot and this step is the longest in a run. Bundle an Office source above to make it work offline."
+                        ]
+                    )
+                } else {
+                    NoticeBanner(
+                        kind: .info,
+                        title: "Office installs from the drive",
+                        messages: [
+                            "No internet needed for this step. The source is copied onto every drive you build, so builds take longer and the drive needs the room."
+                        ]
+                    )
+                }
             }
         }
     }
@@ -1009,6 +1047,37 @@ struct Microsoft365Section: View {
                 }
             }
         )
+    }
+
+    /// The folder name plus its size, because "several GB" is the whole reason
+    /// somebody would think twice about bundling it.
+    private var sourceLabel: String {
+        guard !office.sourcePath.isEmpty else { return "Downloads during provisioning" }
+        let name = (office.sourcePath as NSString).lastPathComponent
+        guard let size = Self.folderSize(office.sourcePath) else { return name }
+        return "\(name) · \(size.byteSize)"
+    }
+
+    private static func folderSize(_ path: String) -> Int64? {
+        let office = URL(fileURLWithPath: path).appendingPathComponent("Office", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: office.path),
+              let walker = FileManager.default.enumerator(
+                  at: office, includingPropertiesForKeys: [.fileSizeKey]
+              )
+        else { return nil }
+        var total: Int64 = 0
+        for case let item as URL in walker {
+            total += Int64((try? item.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+        return total
+    }
+
+    private func chooseSource() {
+        guard let url = Panels.chooseFile(
+            title: "Choose the folder containing the downloaded Office source",
+            directories: true
+        ) else { return }
+        office.sourcePath = url.path
     }
 
     private func chooseSetup() {

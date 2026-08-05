@@ -70,6 +70,11 @@
           "default": "",
           "description": "The ODT setup.exe on the build Mac. Bundled onto the drive so the version is pinned."
         },
+        "sourcePath": {
+          "type": "string",
+          "default": "",
+          "description": "Folder containing a pre-downloaded Office source, produced by running 'setup.exe /download configuration.xml' on a Windows machine. Point at the folder that CONTAINS Office, not at Office\\Data. Bundling it makes the install work with no internet, at the cost of several GB on every drive. Empty streams Office from Microsoft's CDN during provisioning."
+        },
         "product": {
           "enum": ["o365ProPlusRetail", "o365BusinessRetail", "proPlus2024Volume", "standard2024Volume", "proPlus2021Volume"],
           "default": "o365ProPlusRetail"

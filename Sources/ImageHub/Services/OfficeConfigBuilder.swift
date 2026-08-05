@@ -11,11 +11,19 @@ import Foundation
 enum OfficeConfigBuilder {
     static let fileName = "configuration.xml"
 
+    /// Where the staged Office source lands on the target.
+    ///
+    /// `Stage.cmd` copies the payload to `C:\ImageHub`, so this is known at build
+    /// time. `Provision.ps1` corrects it if a run ends up working from the media
+    /// instead, which happens when staging never got the chance.
+    static let bundledSourcePath = #"C:\ImageHub\Office"#
+
     /// Element order inside `<Configuration>` is not enforced the way the unattend
     /// schema is, but the ODT documents this sequence and there is nothing to gain
     /// from deviating: Add, RemoveMSI, Display, Property, Updates.
     static func xml(for template: DeploymentTemplate) -> String {
         let office = template.microsoft365
+        let bundlesSource = !office.sourcePath.isEmpty
         // An empty language follows the rest of the template rather than making the
         // operator type "en-us" twice. The ODT wants a lowercased locale tag.
         let language = office.language.isEmpty
@@ -39,8 +47,18 @@ enum OfficeConfigBuilder {
               </Product>
             """
 
+        // SourcePath points the Deployment Tool at a local copy instead of the CDN, so
+        // the install works with no internet at all. AllowCdnFallback keeps a partial
+        // or mismatched local source from being fatal on a machine that *is* online.
+        var addAttributes = "OfficeClientEdition=\"\(esc(office.architecture))\""
+        addAttributes += " Channel=\"\(esc(office.channel.channelID))\""
+        if bundlesSource {
+            addAttributes += " SourcePath=\"\(esc(bundledSourcePath))\""
+            addAttributes += " AllowCdnFallback=\"True\""
+        }
+
         var body = """
-              <Add OfficeClientEdition="\(esc(office.architecture))" Channel="\(esc(office.channel.channelID))">
+              <Add \(addAttributes)>
             \(product)
               </Add>
             """

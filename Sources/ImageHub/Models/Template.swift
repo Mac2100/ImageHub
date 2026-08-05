@@ -351,6 +351,17 @@ struct Microsoft365Spec: Codable, Equatable, Hashable {
     /// bundling it rather than fetching it at provisioning time means the version
     /// is pinned and no download URL can rot.
     var setupPath: String = ""
+    /// A folder holding a pre-downloaded Office source, so the install needs no
+    /// internet at all.
+    ///
+    /// Produced by running `setup.exe /download configuration.xml` on a Windows
+    /// machine, which writes an `Office\Data\…` tree beside it. It cannot be
+    /// produced here: `setup.exe` is a Windows binary. Point at the folder that
+    /// *contains* `Office`.
+    ///
+    /// Empty means the Deployment Tool streams Office from Microsoft's CDN during
+    /// provisioning, which is smaller media but needs the machine online.
+    var sourcePath: String = ""
     var product: Product = .o365ProPlusRetail
     var channel: Channel = .current
     var architecture: String = "64"
@@ -445,6 +456,7 @@ struct Microsoft365Spec: Codable, Equatable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = c.v(.enabled, false)
         setupPath = c.v(.setupPath, "")
+        sourcePath = c.v(.sourcePath, "")
         product = c.v(.product, Product.o365ProPlusRetail)
         channel = c.v(.channel, Channel.current)
         architecture = c.v(.architecture, "64")
@@ -1105,6 +1117,19 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
                 add("Microsoft 365 is on but no Office Deployment Tool setup.exe is chosen.", .apps)
             } else if !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
                 add("The Office Deployment Tool setup.exe this template points at is missing.", .apps)
+            }
+            if !microsoft365.sourcePath.isEmpty {
+                let office = (microsoft365.sourcePath as NSString)
+                    .appendingPathComponent("Office")
+                if !FileManager.default.fileExists(atPath: microsoft365.sourcePath) {
+                    add("The bundled Office source folder is missing.", .apps)
+                } else if !FileManager.default.fileExists(atPath: office) {
+                    add(
+                        "The Office source folder has no “Office” subfolder — point at the "
+                            + "folder you ran “setup.exe /download” in, not at Office\\Data.",
+                        .apps
+                    )
+                }
             }
             // Both would run, one would lose, and which one is not worth finding out
             // on a bench.
