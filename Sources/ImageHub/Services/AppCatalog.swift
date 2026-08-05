@@ -28,6 +28,31 @@ enum AppCatalog {
         "Slack.Slack": "SlackTechnologies.Slack",
     ]
 
+    /// The winget package that has been replaced by a first-class feature.
+    ///
+    /// Dropping it from the catalog does nothing for templates already on disk --
+    /// they keep the ID they were created with. Slack taught that lesson: the
+    /// catalog was corrected two releases before a real run was still sending the
+    /// old ID.
+    static let officePackageID = "Microsoft.Office"
+
+    /// Moves a template off the winget Office package and onto the Deployment Tool.
+    ///
+    /// The intent either way was "install Office", and one of the two routes
+    /// actually manages it, so this changes the outcome rather than the wish. A
+    /// template that had it disabled just loses a dead entry.
+    static func migratingOffice(
+        apps: inout [AppSelection],
+        office: inout Microsoft365Spec
+    ) {
+        let matches = apps.filter { $0.source == .winget && $0.packageID == officePackageID }
+        guard !matches.isEmpty else { return }
+        apps.removeAll { $0.source == .winget && $0.packageID == officePackageID }
+        if matches.contains(where: { $0.enabled }) {
+            office.enabled = true
+        }
+    }
+
     /// Rewrites a stored selection whose package ID has since been renamed.
     static func correctingRenames(_ selection: AppSelection) -> AppSelection {
         guard selection.source == .winget,
@@ -45,8 +70,12 @@ enum AppCatalog {
         Entry(id: "Microsoft.Edge", name: "Microsoft Edge", category: "Browsers", note: "Preinstalled on Windows 11"),
 
         // Productivity
-        Entry(id: "Microsoft.Office", name: "Microsoft 365 Apps", category: "Productivity",
-              note: "Usually fails on a hash mismatch - use the Microsoft 365 section on the Apps tab instead"),
+        //
+        // Microsoft.Office is deliberately absent. It failed on every real run with
+        // "Installer hash does not match; this cannot be overridden when running as
+        // admin", and offering a package that does not work -- then warning people
+        // away from it -- is worse than not offering it. The Microsoft 365 section
+        // on the Apps tab does the job properly.
         Entry(id: "Adobe.Acrobat.Reader.64-bit", name: "Adobe Acrobat Reader", category: "Productivity"),
         Entry(id: "Microsoft.Teams", name: "Microsoft Teams", category: "Productivity"),
         Entry(id: "Zoom.Zoom", name: "Zoom", category: "Productivity"),

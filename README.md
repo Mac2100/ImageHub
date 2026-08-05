@@ -39,9 +39,9 @@ screen. No keystrokes in between.
   your macOS Keychain, auto-logon for the provisioning run, optional hiding from
   the sign-in screen afterwards.
 - **Applications** — winget package IDs (with a built-in catalog of ~70 packages
-  IT actually deploys), bundled MSI/EXE installers copied onto the stick for
-  offline or version-pinned installs, or inline PowerShell. Per-app "fail the
-  build if this doesn't install".
+  IT actually deploys, and none that are known not to work), bundled MSI/EXE
+  installers copied onto the stick for offline or version-pinned installs, or
+  inline PowerShell. Per-app "fail the build if this doesn't install".
 - **Microsoft 365 via the Office Deployment Tool** — winget's `Microsoft.Office`
   fails on nearly every run, because winget pins an installer hash and Microsoft
   ships a new installer behind the same URL; the manifest is stale more often than

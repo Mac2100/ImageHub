@@ -1047,6 +1047,13 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         system = c.v(.system, SystemSpec())
         oobe = c.v(.oobe, OOBESpec())
         scripts = c.v(.scripts, [])
+
+        // Applied to the two fields it touches, not through `self`, which is not
+        // safely readable until every stored property is assigned. The winget Office
+        // package never worked, so a template still carrying it is moved onto the
+        // Deployment Tool; correcting the catalog alone would never reach a template
+        // already on disk.
+        AppCatalog.migratingOffice(apps: &apps, office: &microsoft365)
     }
 
     var enabledApps: [AppSelection] {
