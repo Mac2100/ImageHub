@@ -903,7 +903,8 @@ struct Microsoft365Section: View {
                     """
                     Off. Adding “Microsoft 365 Apps” from the catalog uses winget instead, \
                     which usually fails on an installer-hash mismatch Microsoft's own \
-                    manifest causes — turn this on to use the Office Deployment Tool.
+                    manifest causes. Turning this on needs nothing from you — ImageHub \
+                    fetches the Deployment Tool itself.
                     """
                 )
                 .font(.caption)
@@ -912,21 +913,25 @@ struct Microsoft365Section: View {
                 VStack(alignment: .leading, spacing: 10) {
                     LabeledContent("Deployment Tool") {
                         HStack(spacing: 8) {
-                            Text(setupName.isEmpty ? "Not chosen" : setupName)
+                            Text(setupName.isEmpty ? automaticToolLabel : setupName)
                                 .font(.callout)
                                 .foregroundStyle(setupName.isEmpty ? .secondary : .primary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Button("Choose setup.exe…") { chooseSetup() }
                                 .controlSize(.small)
+                            if !office.setupPath.isEmpty {
+                                Button("Use automatic") { office.setupPath = "" }
+                                    .controlSize(.small)
+                            }
                         }
                     }
                     Text(
                         """
-                        Download the Office Deployment Tool once from Microsoft, run it to \
-                        extract setup.exe, and point here at that file. It is copied onto \
-                        every drive, so the version is pinned and there is no download URL \
-                        to rot.
+                        Nothing to do here. ImageHub downloads the Deployment Tool from \
+                        Microsoft's CDN on the first build that needs it, about 7 MB, and \
+                        reuses it after that. Choose a setup.exe by hand only if you want a \
+                        specific version pinned.
                         """
                     )
                     .font(.caption)
@@ -1051,6 +1056,12 @@ struct Microsoft365Section: View {
 
     /// The folder name plus its size, because "several GB" is the whole reason
     /// somebody would think twice about bundling it.
+    private var automaticToolLabel: String {
+        OfficeDeploymentTool.isCached
+            ? "Downloaded automatically (cached)"
+            : "Downloaded automatically on the next build"
+    }
+
     private var sourceLabel: String {
         guard !office.sourcePath.isEmpty else { return "Downloads during provisioning" }
         let name = (office.sourcePath as NSString).lastPathComponent

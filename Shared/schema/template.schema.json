@@ -68,7 +68,7 @@
         "setupPath": {
           "type": "string",
           "default": "",
-          "description": "The ODT setup.exe on the build Mac. Bundled onto the drive so the version is pinned."
+          "description": "The ODT setup.exe on the build Mac, bundled onto the drive. Empty is the normal case: ImageHub downloads the Deployment Tool from Microsoft's CDN on the first build that needs it and caches it. Set this only to pin a specific version."
         },
         "sourcePath": {
           "type": "string",

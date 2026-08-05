@@ -124,8 +124,22 @@ enum USBWriter {
 
             // 7 — Payload --------------------------------------------------------
             job.begin(.payload)
+
+            // Office needs the Deployment Tool's setup.exe on the drive. Resolving
+            // it here rather than inside PayloadBuilder keeps the download in async
+            // code and out of a synchronous file-copying routine -- and means an
+            // operator who never went and found one still gets a working build.
+            var resolved = template
+            if template.microsoft365.enabled {
+                let tool = try await OfficeDeploymentTool.resolve(
+                    preferred: template.microsoft365.setupPath,
+                    log: log
+                )
+                resolved.microsoft365.setupPath = tool.path
+            }
+
             let payload = try PayloadBuilder.write(
-                template: template,
+                template: resolved,
                 secrets: secrets,
                 to: volume,
                 log: log

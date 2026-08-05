@@ -1113,9 +1113,11 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
             add("Activation is set to use a KMS host but no host is set.", .windows)
         }
         if microsoft365.enabled {
-            if microsoft365.setupPath.isEmpty {
-                add("Microsoft 365 is on but no Office Deployment Tool setup.exe is chosen.", .apps)
-            } else if !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
+            // An empty path is fine: the build downloads the Deployment Tool from
+            // Microsoft and caches it. Only a path that was set and has since moved
+            // is a problem, because that one is a stale pin rather than a default.
+            if !microsoft365.setupPath.isEmpty
+                && !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
                 add("The Office Deployment Tool setup.exe this template points at is missing.", .apps)
             }
             if !microsoft365.sourcePath.isEmpty {

@@ -46,13 +46,18 @@ screen. No keystrokes in between.
   fails on nearly every run, because winget pins an installer hash and Microsoft
   ships a new installer behind the same URL; the manifest is stale more often than
   not and no caller can override it. So Office gets Microsoft's own supported path
-  instead: point ImageHub at the Deployment Tool's `setup.exe` once, pick the
-  product, channel, architecture and which apps to leave out, and it generates
-  `configuration.xml` **at build time** — so a mistake surfaces on your Mac, not on
-  a bench — and bundles both onto the drive. Optionally bundle the Office payload
-  itself too (run `setup.exe /download` once on any Windows box) and the install
-  needs no internet at all; leave it out and Office streams from Microsoft's CDN
-  during provisioning instead.
+  instead, and there is nothing to go and fetch first: ImageHub downloads the
+  Deployment Tool from Microsoft's CDN on the first build that needs it (~7 MB,
+  cached afterwards). Pick the product, channel, architecture and which apps to
+  leave out, and it generates `configuration.xml` **at build time** — so a mistake
+  surfaces on your Mac, not on a bench. Office itself streams from Microsoft during
+  provisioning, so the machine needs a network; point at a pre-downloaded Office
+  source (`setup.exe /download`, run once on any Windows box) if you'd rather it
+  install entirely offline.
+
+  Neither the Deployment Tool nor Office is committed to this repo. Both are
+  Microsoft's to license, not ImageHub's to redistribute — fetching the tool from
+  source at build time avoids the question, and Office is never bundled at all.
 - **System configuration** — time zone and locale, power plan, Remote Desktop,
   Explorer and taskbar defaults written to the *default user profile*, telemetry
   and consumer-feature policies, AppX debloat list, optional Windows features,
