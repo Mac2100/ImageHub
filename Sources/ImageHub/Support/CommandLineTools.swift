@@ -17,6 +17,8 @@ enum CommandLineTools {
             emitAnswerFile(templatePath: arguments.dropFirst().first)
         case "--emit-payload-config":
             emitPayloadConfig(templatePath: arguments.dropFirst().first)
+        case "--emit-office-config":
+            emitOfficeConfig(templatePath: arguments.dropFirst().first)
         case "--version":
             print(AppVersion.current)
             exit(0)
@@ -37,6 +39,8 @@ enum CommandLineTools {
           ImageHub --emit-answer-file [template.json] Print the generated autounattend.xml
           ImageHub --emit-payload-config [template.json]
                                                       Print the generated payload config.json
+          ImageHub --emit-office-config [template.json]
+                                                      Print the generated Office configuration.xml
           ImageHub --version                          Print the version
           ImageHub --help                             Show this
 
@@ -63,6 +67,18 @@ enum CommandLineTools {
         let template = loadTemplate(templatePath)
         // Empty secrets on purpose: this mode must never touch the Keychain.
         print(AnswerFileBuilder(template: template, secrets: .init()).build())
+        exit(0)
+    }
+
+    /// The Office Deployment Tool rejects a malformed configuration outright, and
+    /// it would do so after Windows is installed. Same reasoning as the answer
+    /// file: check it here.
+    private static func emitOfficeConfig(templatePath: String?) {
+        var template = loadTemplate(templatePath)
+        // The starter template has Office off; emit what it *would* write so the
+        // check has something to parse.
+        template.microsoft365.enabled = true
+        print(OfficeConfigBuilder.xml(for: template))
         exit(0)
     }
 

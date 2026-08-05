@@ -46,7 +46,7 @@ enum AppCatalog {
 
         // Productivity
         Entry(id: "Microsoft.Office", name: "Microsoft 365 Apps", category: "Productivity",
-              note: "Often fails - winget's hash lags Microsoft's installer; the Office Deployment Tool is more reliable"),
+              note: "Usually fails on a hash mismatch - use the Microsoft 365 section on the Apps tab instead"),
         Entry(id: "Adobe.Acrobat.Reader.64-bit", name: "Adobe Acrobat Reader", category: "Productivity"),
         Entry(id: "Microsoft.Teams", name: "Microsoft Teams", category: "Productivity"),
         Entry(id: "Zoom.Zoom", name: "Zoom", category: "Productivity"),

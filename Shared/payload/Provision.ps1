@@ -1250,7 +1250,75 @@ if ($apps.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Branding
+# 11. Microsoft 365 through the Office Deployment Tool
+# ---------------------------------------------------------------------------
+
+<#
+    winget's Microsoft.Office package fails on nearly every run with "Installer
+    hash does not match; this cannot be overridden when running as admin" -- winget
+    pins a hash, Microsoft ships a new installer behind the same URL, and the
+    manifest is stale more often than not. Nothing on this side can fix that.
+
+    The ODT is Microsoft's own supported path. ImageHub bundles the operator's
+    setup.exe and generates configuration.xml at build time, so all this step has
+    to do is run it and interpret the result.
+#>
+
+$office = Get-Setting $Config 'microsoft365'
+if ([bool](Get-Setting $office 'enabled' $false)) {
+    $script:StepTotal++
+    Invoke-Step 'Installing Microsoft 365' {
+        $setup = Join-Path $Root ([string](Get-Setting $office 'setup' ''))
+        $configuration = Join-Path $Root ([string](Get-Setting $office 'configuration' ''))
+
+        if (-not (Test-Path -LiteralPath $setup)) {
+            throw "The Office Deployment Tool is missing from the payload: $setup"
+        }
+        if (-not (Test-Path -LiteralPath $configuration)) {
+            throw "The Office configuration is missing from the payload: $configuration"
+        }
+
+        # Office comes down from Microsoft's CDN, so no network means no install.
+        # Say that plainly rather than letting setup.exe fail with a bare code.
+        if (-not (Wait-ForNetwork -TimeoutSeconds 60)) {
+            Write-Log -Level WARN -Message 'No ping response; attempting the Office install anyway.'
+        }
+
+        $product = [string](Get-Setting $office 'product' 'Office')
+        $timeoutMinutes = [int](Get-Setting $office 'timeoutMinutes' 90)
+        if ($timeoutMinutes -lt 5) { $timeoutMinutes = 90 }
+        Write-Log -Level INFO -Message ("Installing $product with the Office Deployment Tool. " +
+            "This downloads several GB and may take a while (limit $timeoutMinutes minutes).")
+
+        $result = Invoke-Bounded -FilePath $setup `
+            -Arguments ('/configure "' + $configuration + '"') `
+            -TimeoutSeconds ($timeoutMinutes * 60)
+
+        if ($result.TimedOut) {
+            throw "The Office install did not finish within $timeoutMinutes minutes and was stopped."
+        }
+        if ($result.Output) { Write-Log -Level INFO -Message $result.Output }
+
+        <#
+            setup.exe returns 0 on success and 1 for "a restart is needed", which is
+            not a failure. 17002 is the ODT's "the install was cancelled or another
+            Click-to-Run operation is in progress" -- worth naming because an OEM
+            trial mid-uninstall causes it and a retry usually succeeds.
+        #>
+        if ($result.ExitCode -eq 0 -or $result.ExitCode -eq 1) {
+            Write-Log -Level OK -Message "$product installed."
+        } elseif ($result.ExitCode -eq 17002) {
+            throw ('Another Click-to-Run operation was already in progress, so Office did ' +
+                'not install. A preinstalled Office trial being removed is the usual cause; ' +
+                'running the step again once it settles normally works.')
+        } else {
+            throw "The Office Deployment Tool exited with $($result.ExitCode)."
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 12. Branding
 # ---------------------------------------------------------------------------
 
 $wallpaper = Get-Setting $System 'wallpaper' ''
@@ -1352,7 +1420,7 @@ if ($startLayout) {
 }
 
 # ---------------------------------------------------------------------------
-# 12. Windows Update policy
+# 13. Windows Update policy
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Applying the Windows Update policy' {
@@ -1389,7 +1457,7 @@ if (Get-Setting $System 'installUpdates' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 13. Accounts
+# 14. Accounts
 # ---------------------------------------------------------------------------
 
 $endUserMode = Get-Setting $EndUser 'mode' 'leaveOOBE'
@@ -1511,7 +1579,7 @@ if (Get-Setting $Admin 'passwordNeverExpires' $true) {
 }
 
 # ---------------------------------------------------------------------------
-# 14. Encryption
+# 15. Encryption
 # ---------------------------------------------------------------------------
 
 $bitLocker = Get-Setting $System 'bitLocker' 'off'
@@ -1575,7 +1643,7 @@ if (Get-Setting $System 'disableRecoveryEnvironment' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 15. Registry tweaks from the template
+# 16. Registry tweaks from the template
 # ---------------------------------------------------------------------------
 
 $tweaks = @(Get-Setting $System 'registryTweaks' @())
@@ -1595,7 +1663,7 @@ if ($tweaks.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 16. Custom scripts
+# 17. Custom scripts
 # ---------------------------------------------------------------------------
 
 function Invoke-CustomScripts {
@@ -1632,7 +1700,7 @@ function Invoke-CustomScripts {
 Invoke-CustomScripts -Phase 'provision'
 
 # ---------------------------------------------------------------------------
-# 17. Hide the admin account, if asked
+# 18. Hide the admin account, if asked
 # ---------------------------------------------------------------------------
 
 if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
@@ -1650,7 +1718,7 @@ if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
 Invoke-CustomScripts -Phase 'finalize'
 
 # ---------------------------------------------------------------------------
-# 18. Clean up secrets and report
+# 19. Clean up secrets and report
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Clearing staged credentials' {

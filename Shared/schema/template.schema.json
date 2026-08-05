@@ -59,6 +59,37 @@
       }
     },
 
+    "microsoft365": {
+      "type": "object",
+      "description": "Installs Office through the Office Deployment Tool. winget's Microsoft.Office package fails on an installer-hash mismatch caused by Microsoft's own manifest being stale, which no caller can override; the ODT is Microsoft's supported path. ImageHub generates configuration.xml at build time and bundles the operator's setup.exe.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "setupPath": {
+          "type": "string",
+          "default": "",
+          "description": "The ODT setup.exe on the build Mac. Bundled onto the drive so the version is pinned."
+        },
+        "product": {
+          "enum": ["o365ProPlusRetail", "o365BusinessRetail", "proPlus2024Volume", "standard2024Volume", "proPlus2021Volume"],
+          "default": "o365ProPlusRetail"
+        },
+        "channel": { "enum": ["current", "monthlyEnterprise", "semiAnnual"], "default": "current" },
+        "architecture": { "enum": ["64", "32"], "default": "64" },
+        "language": { "type": "string", "default": "", "description": "Empty follows the template's display language." },
+        "excludedApps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["Groove", "Lync"],
+          "description": "ODT ExcludeApp IDs, e.g. Access, Publisher, Teams."
+        },
+        "removeExistingOffice": { "type": "boolean", "default": true },
+        "autoActivate": { "type": "boolean", "default": true },
+        "keepUpdatesEnabled": { "type": "boolean", "default": true },
+        "timeoutMinutes": { "type": "integer", "minimum": 5, "default": 90 }
+      }
+    },
+
     "disk": {
       "type": "object",
       "description": "Describes the TARGET MACHINE's disk, not the USB stick.",

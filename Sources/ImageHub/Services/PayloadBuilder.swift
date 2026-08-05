@@ -61,6 +61,14 @@ enum PayloadBuilder {
             var connectAutomatically: Bool
         }
 
+        struct Microsoft365: Encodable {
+            var enabled: Bool
+            var setup: String
+            var configuration: String
+            var product: String
+            var timeoutMinutes: Int
+        }
+
         struct Activation: Encodable {
             var mode: String
             var kmsHost: String
@@ -127,6 +135,7 @@ enum PayloadBuilder {
         var endUser: EndUser
         var identity: Identity
         var apps: [App]
+        var microsoft365: Microsoft365
         var system: System
         var scripts: [Script]
     }
@@ -193,7 +202,45 @@ enum PayloadBuilder {
             )
         }
 
-        // 3. Assets referenced by the template.
+        // 3. Microsoft 365 through the Office Deployment Tool.
+        //
+        // setup.exe is the operator's own copy, bundled rather than downloaded so
+        // the version is pinned and no URL can rot. configuration.xml is generated
+        // here so a mistake in it surfaces on this Mac, not on a bench.
+        var office = Config.Microsoft365(
+            enabled: false, setup: "", configuration: "",
+            product: template.microsoft365.product.productID,
+            timeoutMinutes: template.microsoft365.timeoutMinutes
+        )
+        if template.microsoft365.enabled {
+            let origin = URL(fileURLWithPath: template.microsoft365.setupPath)
+            guard fm.fileExists(atPath: origin.path) else {
+                throw PayloadError(
+                    message: """
+                        Microsoft 365 is enabled but the Office Deployment Tool setup.exe \
+                        is missing: \(template.microsoft365.setupPath)
+                        """
+                )
+            }
+            let officeDirectory = root.appendingPathComponent("Office", isDirectory: true)
+            try fm.createDirectory(at: officeDirectory, withIntermediateDirectories: true)
+
+            log("Copying the Office Deployment Tool (\(origin.lastPathComponent))…")
+            try fm.copyItem(at: origin, to: officeDirectory.appendingPathComponent("setup.exe"))
+
+            let configuration = OfficeConfigBuilder.xml(for: template)
+            try configuration.write(
+                to: officeDirectory.appendingPathComponent(OfficeConfigBuilder.fileName),
+                atomically: true,
+                encoding: .utf8
+            )
+            office.enabled = true
+            office.setup = "Office\\setup.exe"
+            office.configuration = "Office\\\(OfficeConfigBuilder.fileName)"
+            log("Wrote \(OfficeConfigBuilder.fileName) for \(template.microsoft365.product.label).")
+        }
+
+        // 4. Assets referenced by the template.
         let assets = root.appendingPathComponent("Assets", isDirectory: true)
         func copyAsset(_ path: String, as name: String) throws -> String {
             guard !path.isEmpty else { return "" }
@@ -243,6 +290,7 @@ enum PayloadBuilder {
             template: template,
             secrets: secrets,
             apps: apps,
+            microsoft365: office,
             scripts: scripts,
             wallpaper: wallpaper,
             lockScreen: lockScreen,
@@ -274,6 +322,7 @@ enum PayloadBuilder {
         template: DeploymentTemplate,
         secrets: AnswerFileBuilder.ResolvedSecrets,
         apps: [Config.App],
+        microsoft365 office: Config.Microsoft365,
         scripts: [Config.Script],
         wallpaper: String,
         lockScreen: String,
@@ -308,6 +357,7 @@ enum PayloadBuilder {
                 domain: template.identity.domain
             ),
             apps: apps,
+            microsoft365: office,
             system: Config.System(
                 computerNameTemplate: system.computerNameTemplate,
                 timeZone: system.timeZone,

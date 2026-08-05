@@ -87,6 +87,8 @@ struct AppsTab: View {
                     ]
                 )
             }
+
+            Microsoft365Section(office: $draft.microsoft365)
         }
         .sheet(isPresented: $showingCatalog) {
             AppCatalogSheet(
@@ -864,5 +866,155 @@ struct SilentSwitchField: View {
     private func sync() {
         preset = SilentSwitchPreset.matching(arguments)
         if preset == .custom { custom = arguments }
+    }
+}
+
+// MARK: - Microsoft 365
+
+/// Office gets its own section rather than being one row among the winget
+/// packages, because it does not install like one.
+///
+/// `Microsoft.Office` in winget fails on nearly every run — winget pins an
+/// installer hash and Microsoft ships a new installer behind the same URL, so the
+/// manifest is stale more often than not and no caller can override it. The Office
+/// Deployment Tool is Microsoft's own supported path, and it needs a
+/// `configuration.xml` that ImageHub generates at build time.
+struct Microsoft365Section: View {
+    @Binding var office: Microsoft365Spec
+    @Environment(\.appTheme) private var theme
+
+    private var setupName: String {
+        office.setupPath.isEmpty ? "" : (office.setupPath as NSString).lastPathComponent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Microsoft 365")
+                    .font(.headline)
+                Spacer()
+                Toggle("Install with the Office Deployment Tool", isOn: $office.enabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            if !office.enabled {
+                Text(
+                    """
+                    Off. Adding “Microsoft 365 Apps” from the catalog uses winget instead, \
+                    which usually fails on an installer-hash mismatch Microsoft's own \
+                    manifest causes — turn this on to use the Office Deployment Tool.
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledContent("Deployment Tool") {
+                        HStack(spacing: 8) {
+                            Text(setupName.isEmpty ? "Not chosen" : setupName)
+                                .font(.callout)
+                                .foregroundStyle(setupName.isEmpty ? .secondary : .primary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("Choose setup.exe…") { chooseSetup() }
+                                .controlSize(.small)
+                        }
+                    }
+                    Text(
+                        """
+                        Download the Office Deployment Tool once from Microsoft, run it to \
+                        extract setup.exe, and point here at that file. It is copied onto \
+                        every drive, so the version is pinned and there is no download URL \
+                        to rot.
+                        """
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Picker("Product", selection: $office.product) {
+                        ForEach(Microsoft365Spec.Product.allCases) { product in
+                            Text(product.label).tag(product)
+                        }
+                    }
+                    Picker("Update channel", selection: $office.channel) {
+                        ForEach(Microsoft365Spec.Channel.allCases) { channel in
+                            Text(channel.label).tag(channel)
+                        }
+                    }
+                    Picker("Architecture", selection: $office.architecture) {
+                        Text("64-bit").tag("64")
+                        Text("32-bit").tag("32")
+                    }
+
+                    Divider()
+
+                    Text("Leave out")
+                        .font(.subheadline.weight(.medium))
+                    // Two columns: the list is long enough that one column pushes
+                    // everything below it off the screen.
+                    LazyVGrid(
+                        columns: [GridItem(alignment: .leading), GridItem(alignment: .leading)],
+                        alignment: .leading,
+                        spacing: 4
+                    ) {
+                        ForEach(Microsoft365Spec.availableApps, id: \.id) { app in
+                            Toggle(app.label, isOn: excluded(app.id))
+                                .toggleStyle(.checkbox)
+                        }
+                    }
+
+                    Divider()
+
+                    Toggle("Remove older MSI-based Office first", isOn: $office.removeExistingOffice)
+                    if office.product.isVolume {
+                        Toggle("Activate automatically", isOn: $office.autoActivate)
+                    }
+                    Toggle("Leave Office updates enabled", isOn: $office.keepUpdatesEnabled)
+                    LabeledContent("Give up after") {
+                        HStack(spacing: 6) {
+                            TextField("", value: $office.timeoutMinutes, format: .number)
+                                .labelsHidden()
+                                .frame(width: 60)
+                            Text("minutes")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .glassCard()
+
+                NoticeBanner(
+                    kind: .info,
+                    title: "Office downloads itself during provisioning",
+                    messages: [
+                        "The Deployment Tool fetches several GB from Microsoft's CDN, so the machine needs internet at first boot and this step is the longest in a run."
+                    ]
+                )
+            }
+        }
+    }
+
+    /// A binding per app ID, so the checkboxes read and write one array.
+    private func excluded(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { office.excludedApps.contains(id) },
+            set: { isExcluded in
+                if isExcluded {
+                    if !office.excludedApps.contains(id) { office.excludedApps.append(id) }
+                } else {
+                    office.excludedApps.removeAll { $0 == id }
+                }
+            }
+        )
+    }
+
+    private func chooseSetup() {
+        guard let url = Panels.chooseFile(
+            title: "Choose the Office Deployment Tool's setup.exe"
+        ) else { return }
+        office.setupPath = url.path
     }
 }

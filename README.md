@@ -38,10 +38,18 @@ screen. No keystrokes in between.
 - **IT admin profile** — a local administrator account with a password kept in
   your macOS Keychain, auto-logon for the provisioning run, optional hiding from
   the sign-in screen afterwards.
-- **Applications** — winget package IDs (with a built-in catalog of ~30 packages
+- **Applications** — winget package IDs (with a built-in catalog of ~70 packages
   IT actually deploys), bundled MSI/EXE installers copied onto the stick for
   offline or version-pinned installs, or inline PowerShell. Per-app "fail the
   build if this doesn't install".
+- **Microsoft 365 via the Office Deployment Tool** — winget's `Microsoft.Office`
+  fails on nearly every run, because winget pins an installer hash and Microsoft
+  ships a new installer behind the same URL; the manifest is stale more often than
+  not and no caller can override it. So Office gets Microsoft's own supported path
+  instead: point ImageHub at the Deployment Tool's `setup.exe` once, pick the
+  product, channel, architecture and which apps to leave out, and it generates
+  `configuration.xml` **at build time** — so a mistake surfaces on your Mac, not on
+  a bench — and bundles both onto the drive.
 - **System configuration** — time zone and locale, power plan, Remote Desktop,
   Explorer and taskbar defaults written to the *default user profile*, telemetry
   and consumer-feature policies, AppX debloat list, optional Windows features,

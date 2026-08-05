@@ -331,6 +331,132 @@ struct EndUserSpec: Codable, Equatable, Hashable {
     }
 }
 
+// MARK: - Microsoft 365
+
+/// Installs Office through the Office Deployment Tool rather than winget.
+///
+/// winget's `Microsoft.Office` fails on nearly every run with "Installer hash does
+/// not match; this cannot be overridden when running as admin" — winget pins a
+/// hash and Microsoft ships a new installer behind the same URL, so the manifest
+/// is stale more often than not and there is nothing a caller can do about it.
+///
+/// The ODT is Microsoft's own supported deployment path and takes a
+/// `configuration.xml` describing exactly what to install. ImageHub generates that
+/// file at build time — so it is checked before the drive is written, not
+/// discovered to be wrong on a bench — and copies the operator's `setup.exe`
+/// alongside it.
+struct Microsoft365Spec: Codable, Equatable, Hashable {
+    var enabled: Bool = false
+    /// The ODT `setup.exe` on this Mac. Downloaded once from Microsoft and kept;
+    /// bundling it rather than fetching it at provisioning time means the version
+    /// is pinned and no download URL can rot.
+    var setupPath: String = ""
+    var product: Product = .o365ProPlusRetail
+    var channel: Channel = .current
+    var architecture: String = "64"
+    /// Empty follows the template's display language.
+    var language: String = ""
+    /// Apps not to install. Office installs everything in the suite otherwise.
+    var excludedApps: [String] = ["Groove", "Lync"]
+    /// Uninstall any older MSI-based Office first. Almost always wanted on a
+    /// reimage, and required when an OEM preinstalled a trial.
+    var removeExistingOffice: Bool = true
+    var autoActivate: Bool = true
+    var keepUpdatesEnabled: Bool = true
+    /// Office downloads several gigabytes from Microsoft's CDN, and a slow line
+    /// makes that legitimately long.
+    var timeoutMinutes: Int = 90
+
+    /// Everything the ODT can be told to leave out. IDs are Microsoft's.
+    static let availableApps: [(id: String, label: String)] = [
+        ("Access", "Access"),
+        ("Excel", "Excel"),
+        ("Groove", "OneDrive for Business (old)"),
+        ("Lync", "Skype for Business"),
+        ("OneDrive", "OneDrive"),
+        ("OneNote", "OneNote"),
+        ("Outlook", "Outlook"),
+        ("PowerPoint", "PowerPoint"),
+        ("Publisher", "Publisher"),
+        ("Teams", "Teams"),
+        ("Word", "Word"),
+    ]
+
+    enum Product: String, Codable, CaseIterable, Identifiable, Hashable {
+        case o365ProPlusRetail
+        case o365BusinessRetail
+        case proPlus2024Volume
+        case standard2024Volume
+        case proPlus2021Volume
+
+        var id: String { rawValue }
+
+        /// The Product ID the ODT expects, which is not the same as the case name.
+        var productID: String {
+            switch self {
+            case .o365ProPlusRetail: return "O365ProPlusRetail"
+            case .o365BusinessRetail: return "O365BusinessRetail"
+            case .proPlus2024Volume: return "ProPlus2024Volume"
+            case .standard2024Volume: return "Standard2024Volume"
+            case .proPlus2021Volume: return "ProPlus2021Volume"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .o365ProPlusRetail: return "Microsoft 365 Apps for enterprise"
+            case .o365BusinessRetail: return "Microsoft 365 Apps for business"
+            case .proPlus2024Volume: return "Office LTSC Professional Plus 2024"
+            case .standard2024Volume: return "Office LTSC Standard 2024"
+            case .proPlus2021Volume: return "Office LTSC Professional Plus 2021"
+            }
+        }
+
+        /// Volume products activate against KMS/MAK; subscription ones sign in.
+        var isVolume: Bool { productID.hasSuffix("Volume") }
+    }
+
+    enum Channel: String, Codable, CaseIterable, Identifiable, Hashable {
+        case current, monthlyEnterprise, semiAnnual
+
+        var id: String { rawValue }
+
+        /// The Channel attribute value, again not the case name.
+        var channelID: String {
+            switch self {
+            case .current: return "Current"
+            case .monthlyEnterprise: return "MonthlyEnterprise"
+            case .semiAnnual: return "SemiAnnual"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .current: return "Current (monthly features)"
+            case .monthlyEnterprise: return "Monthly Enterprise"
+            case .semiAnnual: return "Semi-Annual Enterprise"
+            }
+        }
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = c.v(.enabled, false)
+        setupPath = c.v(.setupPath, "")
+        product = c.v(.product, Product.o365ProPlusRetail)
+        channel = c.v(.channel, Channel.current)
+        architecture = c.v(.architecture, "64")
+        language = c.v(.language, "")
+        excludedApps = c.v(.excludedApps, ["Groove", "Lync"])
+        removeExistingOffice = c.v(.removeExistingOffice, true)
+        autoActivate = c.v(.autoActivate, true)
+        keepUpdatesEnabled = c.v(.keepUpdatesEnabled, true)
+        timeoutMinutes = max(5, c.v(.timeoutMinutes, 90))
+    }
+}
+
 // MARK: - Identity
 
 struct IdentitySpec: Codable, Equatable, Hashable {
@@ -881,6 +1007,7 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
     var endUser: EndUserSpec = EndUserSpec()
     var identity: IdentitySpec = IdentitySpec()
     var apps: [AppSelection] = []
+    var microsoft365: Microsoft365Spec = Microsoft365Spec()
     var system: SystemSpec = SystemSpec()
     var oobe: OOBESpec = OOBESpec()
     var scripts: [CustomScript] = []
@@ -904,6 +1031,7 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         // Templates keep the package ID they were created with, so a catalog
         // correction has to be applied on the way in or it never reaches them.
         apps = c.v(.apps, []).map(AppCatalog.correctingRenames)
+        microsoft365 = c.v(.microsoft365, Microsoft365Spec())
         system = c.v(.system, SystemSpec())
         oobe = c.v(.oobe, OOBESpec())
         scripts = c.v(.scripts, [])
@@ -971,6 +1099,22 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         if windows.activation.mode == .kms
             && windows.activation.kmsHost.trimmingCharacters(in: .whitespaces).isEmpty {
             add("Activation is set to use a KMS host but no host is set.", .windows)
+        }
+        if microsoft365.enabled {
+            if microsoft365.setupPath.isEmpty {
+                add("Microsoft 365 is on but no Office Deployment Tool setup.exe is chosen.", .apps)
+            } else if !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
+                add("The Office Deployment Tool setup.exe this template points at is missing.", .apps)
+            }
+            // Both would run, one would lose, and which one is not worth finding out
+            // on a bench.
+            if apps.contains(where: { $0.enabled && $0.packageID == "Microsoft.Office" }) {
+                add(
+                    "Microsoft 365 is set to install twice — once through the Office "
+                        + "Deployment Tool and once through winget. Remove the winget entry.",
+                    .apps
+                )
+            }
         }
         if endUser.mode == .createLocalAccount {
             if endUser.username.trimmingCharacters(in: .whitespaces).isEmpty {
