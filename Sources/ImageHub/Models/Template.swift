@@ -340,132 +340,70 @@ struct EndUserSpec: Codable, Equatable, Hashable {
 /// hash and Microsoft ships a new installer behind the same URL, so the manifest
 /// is stale more often than not and there is nothing a caller can do about it.
 ///
-/// The ODT is Microsoft's own supported deployment path and takes a
-/// `configuration.xml` describing exactly what to install. ImageHub generates that
-/// file at build time — so it is checked before the drive is written, not
-/// discovered to be wrong on a bench — and copies the operator's `setup.exe`
-/// alongside it.
+/// Deliberately one decision wide: which apps to install. Everything else the
+/// Deployment Tool can be told is fixed below, because every one of those knobs
+/// had a right answer for this use and offering the wrong answers alongside it
+/// only invited someone to pick one.
 struct Microsoft365Spec: Codable, Equatable, Hashable {
     var enabled: Bool = false
-    /// The ODT `setup.exe` on this Mac. Downloaded once from Microsoft and kept;
-    /// bundling it rather than fetching it at provisioning time means the version
-    /// is pinned and no download URL can rot.
-    var setupPath: String = ""
-    /// A folder holding a pre-downloaded Office source, so the install needs no
-    /// internet at all.
-    ///
-    /// Produced by running `setup.exe /download configuration.xml` on a Windows
-    /// machine, which writes an `Office\Data\…` tree beside it. It cannot be
-    /// produced here: `setup.exe` is a Windows binary. Point at the folder that
-    /// *contains* `Office`.
-    ///
-    /// Empty means the Deployment Tool streams Office from Microsoft's CDN during
-    /// provisioning, which is smaller media but needs the machine online.
-    var sourcePath: String = ""
-    var product: Product = .o365ProPlusRetail
-    var channel: Channel = .current
-    var architecture: String = "64"
-    /// Empty follows the template's display language.
-    var language: String = ""
-    /// Apps not to install. Office installs everything in the suite otherwise.
-    var excludedApps: [String] = ["Groove", "Lync"]
-    /// Uninstall any older MSI-based Office first. Almost always wanted on a
-    /// reimage, and required when an OEM preinstalled a trial.
-    var removeExistingOffice: Bool = true
-    var autoActivate: Bool = true
-    var keepUpdatesEnabled: Bool = true
-    /// Office downloads several gigabytes from Microsoft's CDN, and a slow line
-    /// makes that legitimately long.
-    var timeoutMinutes: Int = 90
 
-    /// Everything the ODT can be told to leave out. IDs are Microsoft's.
+    /// The apps to install. The Deployment Tool only speaks in exclusions, so
+    /// `OfficeConfigBuilder` inverts this — but "what do I want" is the question a
+    /// technician is actually answering.
+    var includedApps: [String] = ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"]
+
+    /// Pins a specific `setup.exe` instead of the copy ImageHub downloads from
+    /// Microsoft. No UI: the automatic download is the answer for everyone, and
+    /// this exists for a machine whose network will not reach Microsoft's CDN.
+    var setupPath: String = ""
+
+    /// Offered as checkboxes, in the order they appear on screen.
     static let availableApps: [(id: String, label: String)] = [
-        ("Access", "Access"),
-        ("Excel", "Excel"),
-        ("Groove", "OneDrive for Business (old)"),
-        ("Lync", "Skype for Business"),
-        ("OneDrive", "OneDrive"),
-        ("OneNote", "OneNote"),
-        ("Outlook", "Outlook"),
-        ("PowerPoint", "PowerPoint"),
-        ("Publisher", "Publisher"),
-        ("Teams", "Teams"),
         ("Word", "Word"),
+        ("Excel", "Excel"),
+        ("PowerPoint", "PowerPoint"),
+        ("Outlook", "Outlook"),
+        ("OneNote", "OneNote"),
+        ("Access", "Access"),
+        ("Publisher", "Publisher"),
     ]
 
-    enum Product: String, Codable, CaseIterable, Identifiable, Hashable {
-        case o365ProPlusRetail
-        case o365BusinessRetail
-        case proPlus2024Volume
-        case standard2024Volume
-        case proPlus2021Volume
+    /// Never installed by the Deployment Tool, and never offered as a choice.
+    ///
+    /// Teams and OneDrive are here because something else already owns them, and
+    /// letting Office install its own copy is how a machine ends up with two.
+    /// Teams comes from the app catalog's `Microsoft.Teams`, which is the current
+    /// Teams client and installs reliably; the copy Office would lay down is the
+    /// retired one. OneDrive ships inbox with Windows 11.
+    ///
+    /// Groove is the retired OneDrive for Business client, Lync is Skype for
+    /// Business, and Bing is the search hijacker nobody has ever asked for.
+    static let alwaysExcluded = ["Bing", "Groove", "Lync", "OneDrive", "Teams"]
 
-        var id: String { rawValue }
+    /// Microsoft 365 Apps for enterprise — what an organisation with E3/E5 or
+    /// "Apps for enterprise" licences is entitled to, and what winget's
+    /// Microsoft.Office installed before this replaced it.
+    static let productID = "O365ProPlusRetail"
 
-        /// The Product ID the ODT expects, which is not the same as the case name.
-        var productID: String {
-            switch self {
-            case .o365ProPlusRetail: return "O365ProPlusRetail"
-            case .o365BusinessRetail: return "O365BusinessRetail"
-            case .proPlus2024Volume: return "ProPlus2024Volume"
-            case .standard2024Volume: return "Standard2024Volume"
-            case .proPlus2021Volume: return "ProPlus2021Volume"
-            }
-        }
+    /// Current is the default channel Microsoft ships and the one that gets
+    /// security fixes soonest.
+    static let channelID = "Current"
 
-        var label: String {
-            switch self {
-            case .o365ProPlusRetail: return "Microsoft 365 Apps for enterprise"
-            case .o365BusinessRetail: return "Microsoft 365 Apps for business"
-            case .proPlus2024Volume: return "Office LTSC Professional Plus 2024"
-            case .standard2024Volume: return "Office LTSC Standard 2024"
-            case .proPlus2021Volume: return "Office LTSC Professional Plus 2021"
-            }
-        }
+    /// 32-bit Office is a legacy choice for old COM add-ins; nothing being imaged
+    /// now wants it.
+    static let architecture = "64"
 
-        /// Volume products activate against KMS/MAK; subscription ones sign in.
-        var isVolume: Bool { productID.hasSuffix("Volume") }
-    }
-
-    enum Channel: String, Codable, CaseIterable, Identifiable, Hashable {
-        case current, monthlyEnterprise, semiAnnual
-
-        var id: String { rawValue }
-
-        /// The Channel attribute value, again not the case name.
-        var channelID: String {
-            switch self {
-            case .current: return "Current"
-            case .monthlyEnterprise: return "MonthlyEnterprise"
-            case .semiAnnual: return "SemiAnnual"
-            }
-        }
-
-        var label: String {
-            switch self {
-            case .current: return "Current (monthly features)"
-            case .monthlyEnterprise: return "Monthly Enterprise"
-            case .semiAnnual: return "Semi-Annual Enterprise"
-            }
-        }
-    }
+    /// Office pulls several GB from Microsoft's CDN, so it gets triple what an
+    /// ordinary app install is allowed.
+    static let timeoutMinutes = 90
 
     init() {}
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = c.v(.enabled, false)
+        includedApps = c.v(.includedApps, ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"])
         setupPath = c.v(.setupPath, "")
-        sourcePath = c.v(.sourcePath, "")
-        product = c.v(.product, Product.o365ProPlusRetail)
-        channel = c.v(.channel, Channel.current)
-        architecture = c.v(.architecture, "64")
-        language = c.v(.language, "")
-        excludedApps = c.v(.excludedApps, ["Groove", "Lync"])
-        removeExistingOffice = c.v(.removeExistingOffice, true)
-        autoActivate = c.v(.autoActivate, true)
-        keepUpdatesEnabled = c.v(.keepUpdatesEnabled, true)
-        timeoutMinutes = max(5, c.v(.timeoutMinutes, 90))
     }
 }
 
@@ -1120,29 +1058,19 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
             add("Activation is set to use a KMS host but no host is set.", .windows)
         }
         if microsoft365.enabled {
-            // An empty path is fine: the build downloads the Deployment Tool from
-            // Microsoft and caches it. Only a path that was set and has since moved
-            // is a problem, because that one is a stale pin rather than a default.
+            // An empty path is the normal case: the build downloads the Deployment
+            // Tool from Microsoft and caches it. Only a path that was set and has
+            // since moved is a problem, because that one is a stale pin.
             if !microsoft365.setupPath.isEmpty
                 && !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
                 add("The Office Deployment Tool setup.exe this template points at is missing.", .apps)
             }
-            if !microsoft365.sourcePath.isEmpty {
-                let office = (microsoft365.sourcePath as NSString)
-                    .appendingPathComponent("Office")
-                if !FileManager.default.fileExists(atPath: microsoft365.sourcePath) {
-                    add("The bundled Office source folder is missing.", .apps)
-                } else if !FileManager.default.fileExists(atPath: office) {
-                    add(
-                        "The Office source folder has no “Office” subfolder — point at the "
-                            + "folder you ran “setup.exe /download” in, not at Office\\Data.",
-                        .apps
-                    )
-                }
+            if microsoft365.includedApps.isEmpty {
+                add("Microsoft 365 is on but no Office apps are selected.", .apps)
             }
             // Both would run, one would lose, and which one is not worth finding out
             // on a bench.
-            if apps.contains(where: { $0.enabled && $0.packageID == "Microsoft.Office" }) {
+            if apps.contains(where: { $0.enabled && $0.packageID == AppCatalog.officePackageID }) {
                 add(
                     "Microsoft 365 is set to install twice — once through the Office "
                         + "Deployment Tool and once through winget. Remove the winget entry.",

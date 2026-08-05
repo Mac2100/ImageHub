@@ -61,37 +61,21 @@
 
     "microsoft365": {
       "type": "object",
-      "description": "Installs Office through the Office Deployment Tool. winget's Microsoft.Office package fails on an installer-hash mismatch caused by Microsoft's own manifest being stale, which no caller can override; the ODT is Microsoft's supported path. ImageHub generates configuration.xml at build time and bundles the operator's setup.exe.",
+      "description": "Installs Office through the Office Deployment Tool. winget's Microsoft.Office package failed on every real run with an installer-hash mismatch caused by Microsoft's own manifest being stale, which no caller can override, so it is no longer in the catalog and a template carrying it is migrated here on load. ImageHub downloads the Deployment Tool from Microsoft and generates configuration.xml at build time. Deliberately one decision wide: which apps. Product (Microsoft 365 Apps for enterprise), channel (Current), architecture (64-bit), language (the template's display language), removing older MSI Office, and leaving updates on are all fixed, because each had one right answer here.",
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean", "default": false },
+        "includedApps": {
+          "type": "array",
+          "items": { "enum": ["Word", "Excel", "PowerPoint", "Outlook", "OneNote", "Access", "Publisher"] },
+          "default": ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"],
+          "description": "The Office apps to install; anything omitted is excluded. Teams and OneDrive are never installed here — Teams comes from the app catalog's Microsoft.Teams (the current client, where Office would install the retired one) and OneDrive ships with Windows 11. Bing, Groove and Lync are always excluded."
+        },
         "setupPath": {
           "type": "string",
           "default": "",
-          "description": "The ODT setup.exe on the build Mac, bundled onto the drive. Empty is the normal case: ImageHub downloads the Deployment Tool from Microsoft's CDN on the first build that needs it and caches it. Set this only to pin a specific version."
-        },
-        "sourcePath": {
-          "type": "string",
-          "default": "",
-          "description": "Folder containing a pre-downloaded Office source, produced by running 'setup.exe /download configuration.xml' on a Windows machine. Point at the folder that CONTAINS Office, not at Office\\Data. Bundling it makes the install work with no internet, at the cost of several GB on every drive. Empty streams Office from Microsoft's CDN during provisioning."
-        },
-        "product": {
-          "enum": ["o365ProPlusRetail", "o365BusinessRetail", "proPlus2024Volume", "standard2024Volume", "proPlus2021Volume"],
-          "default": "o365ProPlusRetail"
-        },
-        "channel": { "enum": ["current", "monthlyEnterprise", "semiAnnual"], "default": "current" },
-        "architecture": { "enum": ["64", "32"], "default": "64" },
-        "language": { "type": "string", "default": "", "description": "Empty follows the template's display language." },
-        "excludedApps": {
-          "type": "array",
-          "items": { "type": "string" },
-          "default": ["Groove", "Lync"],
-          "description": "ODT ExcludeApp IDs, e.g. Access, Publisher, Teams."
-        },
-        "removeExistingOffice": { "type": "boolean", "default": true },
-        "autoActivate": { "type": "boolean", "default": true },
-        "keepUpdatesEnabled": { "type": "boolean", "default": true },
-        "timeoutMinutes": { "type": "integer", "minimum": 5, "default": 90 }
+          "description": "Pins a specific ODT setup.exe instead of the copy ImageHub downloads from Microsoft's CDN. No UI; exists for a machine whose network will not reach the CDN."
+        }
       }
     },
 

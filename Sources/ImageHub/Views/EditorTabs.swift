@@ -874,18 +874,18 @@ struct SilentSwitchField: View {
 /// Office gets its own section rather than being one row among the winget
 /// packages, because it does not install like one.
 ///
-/// `Microsoft.Office` in winget fails on nearly every run — winget pins an
+/// `Microsoft.Office` in winget failed on every real run — winget pins an
 /// installer hash and Microsoft ships a new installer behind the same URL, so the
 /// manifest is stale more often than not and no caller can override it. The Office
-/// Deployment Tool is Microsoft's own supported path, and it needs a
-/// `configuration.xml` that ImageHub generates at build time.
+/// Deployment Tool is Microsoft's own supported path.
+///
+/// One decision wide on purpose: which apps. The Deployment Tool has a dozen other
+/// knobs and each of them had a right answer here, so they are fixed in
+/// `Microsoft365Spec` with the reasoning next to them rather than offered up as
+/// choices someone could get wrong.
 struct Microsoft365Section: View {
     @Binding var office: Microsoft365Spec
     @Environment(\.appTheme) private var theme
-
-    private var setupName: String {
-        office.setupPath.isEmpty ? "" : (office.setupPath as NSString).lastPathComponent
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -893,7 +893,7 @@ struct Microsoft365Section: View {
                 Text("Microsoft 365")
                     .font(.headline)
                 Spacer()
-                Toggle("Install with the Office Deployment Tool", isOn: $office.enabled)
+                Toggle("Install Microsoft 365", isOn: $office.enabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
             }
@@ -901,200 +901,62 @@ struct Microsoft365Section: View {
             if !office.enabled {
                 Text(
                     """
-                    Off. Adding “Microsoft 365 Apps” from the catalog uses winget instead, \
-                    which usually fails on an installer-hash mismatch Microsoft's own \
-                    manifest causes. Turning this on needs nothing from you — ImageHub \
-                    fetches the Deployment Tool itself.
+                    Off. Turning it on needs nothing from you — ImageHub fetches \
+                    Microsoft's Office Deployment Tool itself and installs the apps you \
+                    tick below.
                     """
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledContent("Deployment Tool") {
-                        HStack(spacing: 8) {
-                            Text(setupName.isEmpty ? automaticToolLabel : setupName)
-                                .font(.callout)
-                                .foregroundStyle(setupName.isEmpty ? .secondary : .primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Button("Choose setup.exe…") { chooseSetup() }
-                                .controlSize(.small)
-                            if !office.setupPath.isEmpty {
-                                Button("Use automatic") { office.setupPath = "" }
-                                    .controlSize(.small)
-                            }
-                        }
-                    }
-                    Text(
-                        """
-                        Nothing to do here. ImageHub downloads the Deployment Tool from \
-                        Microsoft's CDN on the first build that needs it, about 7 MB, and \
-                        reuses it after that. Choose a setup.exe by hand only if you want a \
-                        specific version pinned.
-                        """
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                    LabeledContent("Office source") {
-                        HStack(spacing: 8) {
-                            Text(sourceLabel)
-                                .font(.callout)
-                                .foregroundStyle(office.sourcePath.isEmpty ? .secondary : .primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Button("Choose folder…") { chooseSource() }
-                                .controlSize(.small)
-                            if !office.sourcePath.isEmpty {
-                                Button("Clear") { office.sourcePath = "" }
-                                    .controlSize(.small)
-                            }
-                        }
-                    }
-                    Text(
-                        """
-                        Optional, and the difference between needing internet and not. On any \
-                        Windows machine run “setup.exe /download configuration.xml” once — it \
-                        writes an Office\\Data folder beside itself — then point here at the \
-                        folder that contains Office. ImageHub copies it onto the drive and \
-                        Office installs from there, fully offline. It adds several GB to every \
-                        build, so leave it empty if the machines are always wired up.
-                        """
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                    Divider()
-
-                    Picker("Product", selection: $office.product) {
-                        ForEach(Microsoft365Spec.Product.allCases) { product in
-                            Text(product.label).tag(product)
-                        }
-                    }
-                    Picker("Update channel", selection: $office.channel) {
-                        ForEach(Microsoft365Spec.Channel.allCases) { channel in
-                            Text(channel.label).tag(channel)
-                        }
-                    }
-                    Picker("Architecture", selection: $office.architecture) {
-                        Text("64-bit").tag("64")
-                        Text("32-bit").tag("32")
-                    }
-
-                    Divider()
-
-                    Text("Leave out")
+                    Text("Install these apps")
                         .font(.subheadline.weight(.medium))
-                    // Two columns: the list is long enough that one column pushes
-                    // everything below it off the screen.
                     LazyVGrid(
                         columns: [GridItem(alignment: .leading), GridItem(alignment: .leading)],
                         alignment: .leading,
                         spacing: 4
                     ) {
                         ForEach(Microsoft365Spec.availableApps, id: \.id) { app in
-                            Toggle(app.label, isOn: excluded(app.id))
+                            Toggle(app.label, isOn: included(app.id))
                                 .toggleStyle(.checkbox)
                         }
                     }
-
-                    Divider()
-
-                    Toggle("Remove older MSI-based Office first", isOn: $office.removeExistingOffice)
-                    if office.product.isVolume {
-                        Toggle("Activate automatically", isOn: $office.autoActivate)
-                    }
-                    Toggle("Leave Office updates enabled", isOn: $office.keepUpdatesEnabled)
-                    LabeledContent("Give up after") {
-                        HStack(spacing: 6) {
-                            TextField("", value: $office.timeoutMinutes, format: .number)
-                                .labelsHidden()
-                                .frame(width: 60)
-                            Text("minutes")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                    Text(
+                        """
+                        Microsoft 365 Apps for enterprise, 64-bit, Current channel, in this \
+                        template's display language. Teams and OneDrive are left to the app \
+                        catalog and to Windows itself, so Office does not install a second copy \
+                        of either.
+                        """
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 .glassCard()
 
-                if office.sourcePath.isEmpty {
-                    NoticeBanner(
-                        kind: .info,
-                        title: "Office downloads itself during provisioning",
-                        messages: [
-                            "The Deployment Tool fetches several GB from Microsoft's CDN, so the machine needs internet at first boot and this step is the longest in a run. Bundle an Office source above to make it work offline."
-                        ]
-                    )
-                } else {
-                    NoticeBanner(
-                        kind: .info,
-                        title: "Office installs from the drive",
-                        messages: [
-                            "No internet needed for this step. The source is copied onto every drive you build, so builds take longer and the drive needs the room."
-                        ]
-                    )
-                }
+                NoticeBanner(
+                    kind: .info,
+                    title: "Office downloads itself during provisioning",
+                    messages: [
+                        "The Deployment Tool fetches several GB from Microsoft, so the machine needs a network at first boot and this is the longest step in a run."
+                    ]
+                )
             }
         }
     }
 
     /// A binding per app ID, so the checkboxes read and write one array.
-    private func excluded(_ id: String) -> Binding<Bool> {
+    private func included(_ id: String) -> Binding<Bool> {
         Binding(
-            get: { office.excludedApps.contains(id) },
-            set: { isExcluded in
-                if isExcluded {
-                    if !office.excludedApps.contains(id) { office.excludedApps.append(id) }
+            get: { office.includedApps.contains(id) },
+            set: { isIncluded in
+                if isIncluded {
+                    if !office.includedApps.contains(id) { office.includedApps.append(id) }
                 } else {
-                    office.excludedApps.removeAll { $0 == id }
+                    office.includedApps.removeAll { $0 == id }
                 }
             }
         )
-    }
-
-    /// The folder name plus its size, because "several GB" is the whole reason
-    /// somebody would think twice about bundling it.
-    private var automaticToolLabel: String {
-        OfficeDeploymentTool.isCached
-            ? "Downloaded automatically (cached)"
-            : "Downloaded automatically on the next build"
-    }
-
-    private var sourceLabel: String {
-        guard !office.sourcePath.isEmpty else { return "Downloads during provisioning" }
-        let name = (office.sourcePath as NSString).lastPathComponent
-        guard let size = Self.folderSize(office.sourcePath) else { return name }
-        return "\(name) · \(size.byteSize)"
-    }
-
-    private static func folderSize(_ path: String) -> Int64? {
-        let office = URL(fileURLWithPath: path).appendingPathComponent("Office", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: office.path),
-              let walker = FileManager.default.enumerator(
-                  at: office, includingPropertiesForKeys: [.fileSizeKey]
-              )
-        else { return nil }
-        var total: Int64 = 0
-        for case let item as URL in walker {
-            total += Int64((try? item.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
-        }
-        return total
-    }
-
-    private func chooseSource() {
-        guard let url = Panels.chooseFile(
-            title: "Choose the folder containing the downloaded Office source",
-            directories: true
-        ) else { return }
-        office.sourcePath = url.path
-    }
-
-    private func chooseSetup() {
-        guard let url = Panels.chooseFile(
-            title: "Choose the Office Deployment Tool's setup.exe"
-        ) else { return }
-        office.setupPath = url.path
     }
 }

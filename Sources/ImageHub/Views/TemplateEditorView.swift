@@ -683,7 +683,12 @@ struct TemplateEditorView: View {
             if draft.microsoft365.enabled {
                 summaryRow(
                     "Microsoft 365",
-                    "\(draft.microsoft365.product.label) · \(draft.microsoft365.channel.label)"
+                    draft.microsoft365.includedApps.isEmpty
+                        ? "On, but no apps selected"
+                        : Microsoft365Spec.availableApps
+                            .filter { draft.microsoft365.includedApps.contains($0.id) }
+                            .map(\.label)
+                            .joined(separator: ", ")
                 )
             }
             summaryRow("Licence", activationSummary)

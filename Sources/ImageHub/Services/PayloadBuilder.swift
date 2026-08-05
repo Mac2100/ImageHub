@@ -65,10 +65,6 @@ enum PayloadBuilder {
             var enabled: Bool
             var setup: String
             var configuration: String
-            /// Relative path of the bundled Office source, empty when Office streams
-            /// from Microsoft's CDN instead.
-            var source: String
-            var product: String
             var timeoutMinutes: Int
         }
 
@@ -207,13 +203,12 @@ enum PayloadBuilder {
 
         // 3. Microsoft 365 through the Office Deployment Tool.
         //
-        // setup.exe is the operator's own copy, bundled rather than downloaded so
-        // the version is pinned and no URL can rot. configuration.xml is generated
-        // here so a mistake in it surfaces on this Mac, not on a bench.
+        // setup.exe is resolved by USBWriter before this runs -- downloaded from
+        // Microsoft or the operator's pinned copy -- and configuration.xml is
+        // generated here so a mistake in it surfaces on this Mac, not on a bench.
         var office = Config.Microsoft365(
-            enabled: false, setup: "", configuration: "", source: "",
-            product: template.microsoft365.product.productID,
-            timeoutMinutes: template.microsoft365.timeoutMinutes
+            enabled: false, setup: "", configuration: "",
+            timeoutMinutes: Microsoft365Spec.timeoutMinutes
         )
         if template.microsoft365.enabled {
             let origin = URL(fileURLWithPath: template.microsoft365.setupPath)
@@ -240,63 +235,7 @@ enum PayloadBuilder {
             office.enabled = true
             office.setup = "Office\\setup.exe"
             office.configuration = "Office\\\(OfficeConfigBuilder.fileName)"
-            log("Wrote \(OfficeConfigBuilder.fileName) for \(template.microsoft365.product.label).")
-
-            // A pre-downloaded Office source makes the install work with no
-            // internet. It is several GB, so both FAT32 limits get checked here
-            // rather than surfacing as a copy failure four gigabytes in.
-            if !template.microsoft365.sourcePath.isEmpty {
-                let sourceOffice = URL(fileURLWithPath: template.microsoft365.sourcePath)
-                    .appendingPathComponent("Office", isDirectory: true)
-                guard fm.fileExists(atPath: sourceOffice.path) else {
-                    throw PayloadError(
-                        message: """
-                            The Office source folder has no "Office" subfolder. Point at the \
-                            folder you ran "setup.exe /download" in, not at Office\\Data.
-                            """
-                    )
-                }
-
-                var total: Int64 = 0
-                var oversized: [String] = []
-                if let walker = fm.enumerator(
-                    at: sourceOffice,
-                    includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
-                ) {
-                    for case let item as URL in walker {
-                        let values = try? item.resourceValues(
-                            forKeys: [.fileSizeKey, .isRegularFileKey]
-                        )
-                        guard values?.isRegularFile == true, let size = values?.fileSize else {
-                            continue
-                        }
-                        total += Int64(size)
-                        // FAT32 tops out one byte below 4 GiB, and the media has to
-                        // be FAT32 to boot at all.
-                        if Int64(size) >= 4 * 1024 * 1024 * 1024 {
-                            oversized.append("\(item.lastPathComponent) (\(Int64(size).byteSize))")
-                        }
-                    }
-                }
-                if !oversized.isEmpty {
-                    throw PayloadError(
-                        message: """
-                            The Office source contains files too large for FAT32, which this \
-                            drive has to be to boot: \(oversized.joined(separator: ", ")). \
-                            Download a source without them, or leave the source empty and let \
-                            Office stream from Microsoft during provisioning.
-                            """
-                    )
-                }
-
-                log("Copying the bundled Office source (\(total.byteSize))… this takes a while.")
-                try fm.copyItem(
-                    at: sourceOffice,
-                    to: officeDirectory.appendingPathComponent("Office", isDirectory: true)
-                )
-                office.source = "Office\\Office"
-                log("Office will install from the drive, with no internet needed.")
-            }
+            log("Wrote \(OfficeConfigBuilder.fileName) for Microsoft 365.")
         }
 
         // 4. Assets referenced by the template.

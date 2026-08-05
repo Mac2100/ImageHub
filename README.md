@@ -43,17 +43,16 @@ screen. No keystrokes in between.
   installers copied onto the stick for offline or version-pinned installs, or
   inline PowerShell. Per-app "fail the build if this doesn't install".
 - **Microsoft 365 via the Office Deployment Tool** — winget's `Microsoft.Office`
-  fails on nearly every run, because winget pins an installer hash and Microsoft
+  failed on every real run, because winget pins an installer hash and Microsoft
   ships a new installer behind the same URL; the manifest is stale more often than
-  not and no caller can override it. So Office gets Microsoft's own supported path
-  instead, and there is nothing to go and fetch first: ImageHub downloads the
-  Deployment Tool from Microsoft's CDN on the first build that needs it (~7 MB,
-  cached afterwards). Pick the product, channel, architecture and which apps to
-  leave out, and it generates `configuration.xml` **at build time** — so a mistake
-  surfaces on your Mac, not on a bench. Office itself streams from Microsoft during
-  provisioning, so the machine needs a network; point at a pre-downloaded Office
-  source (`setup.exe /download`, run once on any Windows box) if you'd rather it
-  install entirely offline.
+  not and no caller can override it. So it is not in the catalog at all, and Office
+  gets Microsoft's own supported path instead. Tick the apps you want — Word, Excel,
+  PowerPoint, Outlook, OneNote, Access, Publisher — and that is the whole setting.
+  ImageHub downloads the Deployment Tool from Microsoft on the first build that
+  needs it (~7 MB, cached) and generates `configuration.xml` **at build time**, so a
+  mistake surfaces on your Mac rather than on a bench. Product, channel,
+  architecture and language are fixed because each had one right answer; Teams and
+  OneDrive are left to the app catalog and to Windows, so nothing installs twice.
 
   Neither the Deployment Tool nor Office is committed to this repo. Both are
   Microsoft's to license, not ImageHub's to redistribute — fetching the tool from
