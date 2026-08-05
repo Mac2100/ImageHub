@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Checks every winget package ID in ImageHub's catalog against winget itself.
+    Checks every winget package ID in the ImageHub catalog against winget itself.
 
 .DESCRIPTION
     Catalog IDs are typed on a Mac, where there is no winget to check them with.
@@ -13,6 +13,14 @@
 
     The list below is kept in step with Sources/ImageHub/Services/AppCatalog.swift
     by a check in .github/workflows/build.yml, so it cannot quietly drift.
+
+.NOTES
+    No apostrophes anywhere in this file, deliberately. Piping it through
+    "irm | iex" hands PowerShell a string that still carries the file BOM, so the
+    leading <# is not recognised as a comment opener, the help text is parsed as
+    code, and the first apostrophe opens a string that runs to the end of the
+    file. Running it with -File is unaffected, but the pipe form is what people
+    reach for.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File Check-CatalogIDs.ps1
