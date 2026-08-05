@@ -558,6 +558,54 @@ $activation = Get-Setting $System 'activation'
 $activationMode = [string](Get-Setting $activation 'mode' 'automatic')
 
 <#
+    Runs a program with a hard time limit and captures what it said.
+
+    Everything expensive in this script is bounded -- installers, the network
+    probe, the account prompt -- except, until now, the two things activation
+    depends on. Provisioning stopped dead at "Activating Windows" on a machine
+    with no name resolution: slmgr's /ato returned 0x80072EE7 and the licence
+    status query that followed never came back. Reading
+    SoftwareLicensingProduct makes the Software Protection service re-evaluate
+    the licence, and on an offline machine that can block indefinitely.
+
+    A child process can be killed. An in-process WMI call cannot, which is why
+    the status query below runs out-of-process too.
+#>
+function Invoke-Bounded {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$Arguments = '',
+        [int]$TimeoutSeconds = 90
+    )
+
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.Arguments = $Arguments
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $info
+    [void]$process.Start()
+
+    # Start reading before waiting: a child that fills the pipe buffer blocks
+    # forever if nobody is draining it, which would defeat the timeout.
+    $out = $process.StandardOutput.ReadToEndAsync()
+    $err = $process.StandardError.ReadToEndAsync()
+
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $process.Kill() } catch { }
+        return [pscustomobject]@{ TimedOut = $true; ExitCode = -1; Output = '' }
+    }
+
+    $text = ((($out.Result + "`n" + $err.Result) -split "`r?`n" |
+        Where-Object { $_.Trim() }) -join '; ')
+    return [pscustomobject]@{ TimedOut = $false; ExitCode = $process.ExitCode; Output = $text }
+}
+
+<#
     slmgr.vbs is the only supported way to install a key or trigger activation.
     Under wscript it reports through a message box, which on an unattended run
     means an invisible dialog nobody dismisses; cscript keeps everything on
@@ -565,31 +613,52 @@ $activationMode = [string](Get-Setting $activation 'mode' 'automatic')
 #>
 function Invoke-Slmgr {
     param([Parameter(Mandatory)][string[]]$Arguments)
-    $output = & "$env:SystemRoot\System32\cscript.exe" //Nologo `
-        "$env:SystemRoot\System32\slmgr.vbs" @Arguments 2>&1
-    $text = (($output | Where-Object { $_ -and $_.ToString().Trim() }) -join '; ')
+    $line = '//Nologo "' + "$env:SystemRoot\System32\slmgr.vbs" + '" ' + ($Arguments -join ' ')
+    $result = Invoke-Bounded -FilePath "$env:SystemRoot\System32\cscript.exe" `
+        -Arguments $line -TimeoutSeconds 120
+    if ($result.TimedOut) {
+        Write-Log -Level WARN -Message ('slmgr ' + ($Arguments -join ' ') +
+            ' did not return within 120s and was stopped.')
+        return ''
+    }
     # Logged here rather than at the call sites: Write-Log's -Message is a
     # mandatory string, and a silent slmgr run would fail the binding.
-    if ($text) { Write-Log -Level INFO -Message $text }
-    return $text
+    if ($result.Output) { Write-Log -Level INFO -Message $result.Output }
+    return $result.Output
 }
 
 <#
     LicenseStatus 1 is "Licensed"; anything else leaves the watermark up. The
     ApplicationID filter is the Windows product itself, so an Office licence on
     the same machine cannot be mistaken for it.
+
+    Deliberately out-of-process and time-limited: see Invoke-Bounded. Returns 1
+    for licensed, -1 for "read it but not licensed", and -2 for "could not read
+    it", which the caller treats as a reason to stop asking.
 #>
 function Get-ActivationStatus {
-    try {
-        $windows = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
-            Where-Object {
-                $_.ApplicationID -eq '55c92734-d682-4d71-983e-d6ec3f16059f' -and
-                $_.PartialProductKey
-            } | Select-Object -First 1
-        if ($windows) { return [int]$windows.LicenseStatus }
-    } catch {
-        Write-Log -Level WARN -Message "Couldn't read the licence status: $($_.Exception.Message)"
+    $script = @'
+try {
+  $p = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
+    Where-Object { $_.ApplicationID -eq "55c92734-d682-4d71-983e-d6ec3f16059f" -and $_.PartialProductKey } |
+    Select-Object -First 1
+  if ($p) { [int]$p.LicenseStatus } else { -1 }
+} catch { -1 }
+'@
+    # EncodedCommand sidesteps every layer of quoting between here and the child.
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($script))
+    $result = Invoke-Bounded `
+        -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Arguments "-NoProfile -EncodedCommand $encoded" -TimeoutSeconds 60
+
+    if ($result.TimedOut) {
+        Write-Log -Level WARN -Message ('Reading the licence status timed out. The Software ' +
+            'Protection service is usually wedged on a machine with no internet.')
+        return -2
     }
+
+    $value = 0
+    if ([int]::TryParse(($result.Output -replace '[^0-9\-]', ''), [ref]$value)) { return $value }
     return -1
 }
 
@@ -621,12 +690,24 @@ if ($activationMode -eq 'skip') {
             # explicitly covers the case where the image was applied with a
             # different key already in place, which is the usual reason a machine
             # that shipped with Windows comes back unactivated.
+            # Out-of-process and bounded for the same reason as the status read:
+            # this is the same WMI provider, and it can block just as long.
             $oemKey = ''
-            try {
-                $oemKey = [string](Get-CimInstance -ClassName SoftwareLicensingService `
-                    -ErrorAction Stop).OA3xOriginalProductKey
-            } catch {
-                Write-Log -Level WARN -Message "Couldn't read the firmware key: $($_.Exception.Message)"
+            $keyScript = @'
+try {
+  (Get-CimInstance -ClassName SoftwareLicensingService -ErrorAction Stop).OA3xOriginalProductKey
+} catch { "" }
+'@
+            $keyResult = Invoke-Bounded `
+                -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+                -Arguments ('-NoProfile -EncodedCommand ' + [Convert]::ToBase64String(
+                    [System.Text.Encoding]::Unicode.GetBytes($keyScript))) -TimeoutSeconds 60
+            if ($keyResult.TimedOut) {
+                Write-Log -Level WARN -Message 'Reading the firmware key timed out.'
+            } else {
+                # A product key is five groups of five, and nothing else on the line.
+                $match = [regex]::Match($keyResult.Output, '[A-Z0-9]{5}(-[A-Z0-9]{5}){4}')
+                if ($match.Success) { $oemKey = $match.Value }
             }
 
             if (-not [string]::IsNullOrWhiteSpace($oemKey)) {
@@ -639,18 +720,34 @@ if ($activationMode -eq 'skip') {
 
         $result = Invoke-Slmgr @('/ato')
 
-        # /ato returns before the licence state settles on some machines.
+        <#
+            /ato returns before the licence state settles on some machines, so the
+            state is polled -- but against a deadline, and abandoning the poll the
+            moment the query itself stops answering. -2 means the read timed out;
+            asking again would only wait again.
+        #>
+        $deadline = (Get-Date).AddMinutes(2)
         $status = Get-ActivationStatus
-        for ($i = 0; $i -lt 6 -and $status -ne 1; $i++) {
+        while ($status -ne 1 -and $status -ne -2 -and (Get-Date) -lt $deadline) {
             Start-Sleep -Seconds 5
             $status = Get-ActivationStatus
         }
 
         if ($status -eq 1) {
             Write-Log -Level OK -Message 'Windows is activated.'
-        } else {
-            throw "Windows is still not activated (licence status $status). $result"
+            return
         }
+
+        # 0x80072EE7 is "the server name could not be resolved" -- no DNS, so no
+        # internet. Worth naming, because it is not an activation problem and
+        # Windows retries on its own schedule once the machine is online.
+        if ($result -match '0x80072EE7|0x8007232B|0x80072EFD|0x800705B4') {
+            throw ("This machine has no internet connection, so activation could not " +
+                "reach Microsoft ($result). The key is installed; Windows will activate " +
+                'itself once the machine is online. Plug in Ethernet or wait for Wi-Fi.')
+        }
+
+        throw "Windows is still not activated (licence status $status). $result"
     }
 }
 

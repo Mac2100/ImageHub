@@ -90,13 +90,27 @@ try {
     exit 0
 }
 
-# Wait for the driver to land. Staying registered means giving up now costs
-# nothing -- the next logon or restart tries again.
+<#
+    Wait for the driver to land. Staying registered means giving up now costs
+    nothing -- the next logon or restart tries again.
+
+    The wait logs as it goes. It used to be silent, so a log holding a single
+    "starting" line was indistinguishable from a hung script when it was in fact
+    doing exactly what it was told to.
+#>
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $found = $false
+$checks = 0
+Write-Log "Waiting up to $WaitMinutes minute(s) for a wireless interface to appear."
 while ((Get-Date) -lt $deadline) {
     $interfaces = & netsh.exe wlan show interfaces 2>&1
     if ($LASTEXITCODE -eq 0 -and ($interfaces -match 'Name\s*:')) { $found = $true; break }
+    $checks++
+    # Every fifth check, so a twenty-minute wait leaves four lines rather than forty.
+    if ($checks % 5 -eq 0) {
+        $left = [int]([Math]::Ceiling((($deadline - (Get-Date)).TotalMinutes)))
+        Write-Log "Still no wireless interface; $left minute(s) left in this attempt."
+    }
     Start-Sleep -Seconds 30
 }
 
