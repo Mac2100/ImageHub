@@ -257,6 +257,115 @@ if ($script:IsElevated) {
 # ---------------------------------------------------------------------------
 
 <#
+    Windows 11 24H2 moved the WLAN API behind the location permission, and
+    "netsh wlan connect" calls WlanGetAvailableNetworkList underneath. Storing a
+    profile still works; connecting does not. A real run showed exactly that
+    shape -- "Profile stored: Profile DCE-Public is added on interface Wi-Fi"
+    immediately followed by "Network shell commands need location permission to
+    access WLAN information [...] WlanGetAvailableNetworkList returns error 5:
+    Access is denied", and then thirty seconds of an adapter that never
+    associated.
+
+    A freshly imaged machine has location off, because nothing turned it on:
+    the answer file skips the OOBE privacy pages. So the permission has to be
+    granted here or the connect cannot work.
+
+    It is granted for the length of the connect and then put back. Provisioning
+    switches telemetry and consumer features off two steps later, and quietly
+    leaving Location services on afterwards would undercut that -- an imaging
+    tool should not be the reason a setting the operator never asked for is
+    enabled. Association survives the restore: the permission gates apps calling
+    the WLAN API, not the profile, and Wireless AutoConfig reconnects on its own
+    afterwards.
+#>
+$LocationConsentKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+$LocationPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'
+
+function Get-LocationValue {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+    try {
+        return (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name
+    } catch {
+        return $null
+    }
+}
+
+function Grant-LocationAccess {
+    <#
+        Returns what it changed rather than what it set, so the restore can put
+        back exactly the previous state -- including removing a value that was
+        not there to begin with. Wrapped in a hashtable because returning a bare
+        array of one element would unroll to the element itself, and a hashtable
+        reports its key count as .Count.
+    #>
+    $changed = @()
+
+    # The master toggle and the desktop-app toggle are separate: netsh is a
+    # non-packaged app, so granting only the first still leaves it denied.
+    foreach ($path in @($LocationConsentKey, (Join-Path $LocationConsentKey 'NonPackaged'))) {
+        try {
+            $before = Get-LocationValue -Path $path -Name 'Value'
+            if ($before -eq 'Allow') { continue }
+            if (-not (Test-Path -LiteralPath $path)) {
+                New-Item -Path $path -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -LiteralPath $path -Name 'Value' -Value 'Allow' `
+                -PropertyType String -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $path; Name = 'Value'; Before = $before }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't grant location access at ${path}: " +
+                $_.Exception.Message)
+        }
+    }
+
+    # Group Policy overrides the consent store outright, so a machine with this
+    # set stays denied no matter what the toggles say.
+    if ((Get-LocationValue -Path $LocationPolicyKey -Name 'DisableLocation') -eq 1) {
+        try {
+            New-ItemProperty -LiteralPath $LocationPolicyKey -Name 'DisableLocation' -Value 0 `
+                -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $LocationPolicyKey; Name = 'DisableLocation'; Before = 1 }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't clear the DisableLocation policy: " +
+                $_.Exception.Message)
+        }
+    }
+
+    if (@($changed).Count -gt 0) {
+        Write-Log -Message ("Granted location access to the WLAN API for the connect " +
+            "($(@($changed).Count) setting(s) changed, restored afterwards).")
+    }
+    return @{ Changes = $changed }
+}
+
+function Restore-LocationAccess {
+    param($State)
+    $changes = @($State.Changes)
+    foreach ($change in $changes) {
+        try {
+            if ($null -eq $change.Before) {
+                Remove-ItemProperty -LiteralPath $change.Path -Name $change.Name -ErrorAction Stop
+            } else {
+                Set-ItemProperty -LiteralPath $change.Path -Name $change.Name `
+                    -Value $change.Before -ErrorAction Stop
+            }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't restore $($change.Name) under " +
+                "$($change.Path), so it is still set for the connect: $($_.Exception.Message)")
+        }
+    }
+    if ($changes.Count -gt 0) {
+        Write-Log -Message 'Location settings put back the way they were found.'
+    }
+}
+
+function Test-LocationDenied {
+    <# The two things netsh says when the permission is what stopped it. #>
+    param([string]$Text)
+    return ($Text -match 'location permission' -or $Text -match 'WlanGetAvailableNetworkList')
+}
+
+<#
     Hands the Wi-Fi profile to a scheduled task for later.
 
     Needed because netsh cannot store a profile with no wireless interface
@@ -465,29 +574,46 @@ $sharedKey
         }
         Write-Log -Level OK -Message "Profile stored: $addedText"
 
-        $connect = & netsh.exe wlan connect name="$ssid" 2>&1
-        $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
-        Write-Log -Level INFO -Message "Connect requested: $connectText"
-
-        <#
-            Association takes a few seconds, and on a machine that is already on
-            Ethernet Windows is in no hurry about it. Poll rather than declare
-            victory: "State : connected" against our SSID is the only thing that
-            actually means joined.
-        #>
+        $location = Grant-LocationAccess
         $joined = $false
-        for ($attempt = 0; $attempt -lt 15; $attempt++) {
-            Start-Sleep -Seconds 2
-            $state = & netsh.exe wlan show interfaces 2>&1
-            $stateText = ($state -join ' ')
-            if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($ssid)) {
-                $joined = $true
-                break
+        $state = @()
+        $connectText = ''
+        try {
+            $connect = & netsh.exe wlan connect name="$ssid" 2>&1
+            $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
+            Write-Log -Level INFO -Message "Connect requested: $connectText"
+
+            <#
+                Association takes a few seconds, and on a machine that is already on
+                Ethernet Windows is in no hurry about it. Poll rather than declare
+                victory: "State : connected" against our SSID is the only thing that
+                actually means joined.
+            #>
+            for ($attempt = 0; $attempt -lt 15; $attempt++) {
+                Start-Sleep -Seconds 2
+                $state = & netsh.exe wlan show interfaces 2>&1
+                $stateText = ($state -join ' ')
+                if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($ssid)) {
+                    $joined = $true
+                    break
+                }
             }
+        } finally {
+            Restore-LocationAccess -State $location
         }
 
         if ($joined) {
             Write-Log -Level OK -Message "Connected to $ssid."
+        } elseif (Test-LocationDenied $connectText) {
+            <#
+                Granting the permission is the fix, so reaching here means it could
+                not be granted -- Group Policy owning Location services is the usual
+                reason. Say that, rather than blaming Ethernet for it.
+            #>
+            throw ("Stored the profile for $ssid but Windows refused the connect: the WLAN " +
+                'API needs location permission and it could not be granted, which usually ' +
+                'means Group Policy owns Location services on this machine. The profile is ' +
+                'saved and Windows will use it once the permission is available.')
         } else {
             $current = (($state | Where-Object { "$_" -match 'State\s*:|SSID\s*:' }) -join '; ')
             throw ("Stored the profile for $ssid but the adapter did not join within 30s. " +
@@ -1156,8 +1282,24 @@ if ($apps.Count -gt 0) {
                         $output | ForEach-Object { Add-Content -LiteralPath $LogFile -Value "      $_" }
                     }
 
-                    # winget uses 0 for success and 0x8A150061 for "already installed".
-                    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335135) {
+                    <#
+                        winget uses 0 for success, and two more codes that also mean
+                        the machine ends up with the app -- which is the only thing
+                        this step is trying to achieve:
+
+                          -1978335135 / 0x8A150061  already installed, nothing tried
+                          -1978335189 / 0x8A15002B  already installed, nothing newer
+
+                        The second is what anything Windows 11 preinstalls returns.
+                        A real run logged "[FAIL] OneDrive did not install: winget
+                        exited with -1978335189 - Found an existing package already
+                        installed [...] No newer package versions are available",
+                        which is a machine in exactly the wanted state being called
+                        a failure. winget only reports it after finding an existing
+                        install, so it can never mean the app is absent.
+                    #>
+                    $alreadyPresent = @(-1978335135, -1978335189)
+                    if ($LASTEXITCODE -ne 0 -and $alreadyPresent -notcontains $LASTEXITCODE) {
                         # The exit code alone says nothing useful. winget's own last
                         # lines usually name the reason outright -- an unaccepted
                         # agreement, no applicable installer for this architecture,
@@ -1189,7 +1331,13 @@ if ($apps.Count -gt 0) {
 
                         throw "winget exited with $LASTEXITCODE$detail"
                     }
-                    Write-Log -Level OK -Message "$name installed."
+                    # Distinguished rather than both logged as "installed": a run
+                    # that changed nothing should not read like one that did.
+                    if ($alreadyPresent -contains $LASTEXITCODE) {
+                        Write-Log -Level OK -Message "$name is already installed and up to date."
+                    } else {
+                        Write-Log -Level OK -Message "$name installed."
+                    }
                 }
                 'installer' {
                     $relative = Get-Setting $app 'installer'

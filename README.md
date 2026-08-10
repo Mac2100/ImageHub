@@ -216,6 +216,12 @@ logic that already exists rather than a rewrite. CI only builds the macOS app.
   says so before every build.
 - `Provision.ps1` deletes `config.json` and the staged `unattend.xml` copies from
   the target machine once it has consumed them.
+- Joining Wi-Fi turns Location services on for the length of the connect, and
+  turns them back off afterwards. Windows 11 24H2 put the WLAN API behind that
+  permission, so `netsh wlan connect` fails with "Access is denied" without it.
+  Only the settings that were not already permissive are touched, each is
+  restored to the exact value it had, and the log records both the change and
+  the restore.
 - Enabling BitLocker writes the recovery key to `C:\ImageHub\logs\` so you can
   collect it at handover. Move it into your key escrow and delete the file — both
   the app and the script warn about this.
