@@ -131,6 +131,8 @@ enum AppCatalog {
               note: "AnyConnect VPN"),
         Entry(id: "OpenVPNTechnologies.OpenVPNConnect", name: "OpenVPN Connect", category: "Security"),
         Entry(id: "WireGuard.WireGuard", name: "WireGuard", category: "Security"),
+        Entry(id: "Ubiquiti.IdentityDesktop.Endpoint", name: "UniFi Endpoint", category: "Security",
+              note: "UniFi Identity client - one-click Wi-Fi and VPN. Needs an invitation link per user afterwards"),
 
         // Productivity
         Entry(id: "Microsoft.OneDrive", name: "OneDrive", category: "Productivity",
