@@ -680,6 +680,17 @@ struct TemplateEditorView: View {
                     ? "None"
                     : draft.enabledApps.map { $0.displayName }.joined(separator: ", ")
             )
+            if draft.microsoft365.enabled {
+                summaryRow(
+                    "Microsoft 365",
+                    draft.microsoft365.includedApps.isEmpty
+                        ? "On, but no apps selected"
+                        : Microsoft365Spec.availableApps
+                            .filter { draft.microsoft365.includedApps.contains($0.id) }
+                            .map(\.label)
+                            .joined(separator: ", ")
+                )
+            }
             summaryRow("Licence", activationSummary)
             summaryRow("Time zone", draft.system.timeZone)
             if draft.system.removeBloatware {

@@ -38,15 +38,36 @@ screen. No keystrokes in between.
 - **IT admin profile** — a local administrator account with a password kept in
   your macOS Keychain, auto-logon for the provisioning run, optional hiding from
   the sign-in screen afterwards.
-- **Applications** — winget package IDs (with a built-in catalog of ~30 packages
-  IT actually deploys), bundled MSI/EXE installers copied onto the stick for
-  offline or version-pinned installs, or inline PowerShell. Per-app "fail the
-  build if this doesn't install".
+- **Applications** — winget package IDs (with a built-in catalog of ~70 packages
+  IT actually deploys, and none that are known not to work), bundled MSI/EXE
+  installers copied onto the stick for offline or version-pinned installs, or
+  inline PowerShell. Per-app "fail the build if this doesn't install".
+- **Microsoft 365 via the Office Deployment Tool** — winget's `Microsoft.Office`
+  failed on every real run, because winget pins an installer hash and Microsoft
+  ships a new installer behind the same URL; the manifest is stale more often than
+  not and no caller can override it. So it is not in the catalog at all, and Office
+  gets Microsoft's own supported path instead. Tick the apps you want — Word, Excel,
+  PowerPoint, Outlook, OneNote, Access, Publisher — and that is the whole setting.
+  ImageHub downloads the Deployment Tool from Microsoft on the first build that
+  needs it (~7 MB, cached) and generates `configuration.xml` **at build time**, so a
+  mistake surfaces on your Mac rather than on a bench. Product, channel,
+  architecture and language are fixed because each had one right answer; Teams and
+  OneDrive are left to the app catalog and to Windows, so nothing installs twice.
+
+  Neither the Deployment Tool nor Office is committed to this repo. Both are
+  Microsoft's to license, not ImageHub's to redistribute — fetching the tool from
+  source at build time avoids the question, and Office is never bundled at all.
 - **System configuration** — time zone and locale, power plan, Remote Desktop,
   Explorer and taskbar defaults written to the *default user profile*, telemetry
   and consumer-feature policies, AppX debloat list, optional Windows features,
   Windows Update policy, BitLocker, Wi-Fi profile, wallpaper/lock screen/Start
   layout, and arbitrary registry values.
+- **Screen lock and power timeouts** — inactivity lock, display and sleep
+  timeouts on mains and battery, and what closing the lid does. All written as
+  *machine policy* rather than with `powercfg`: power schemes are per-user, so
+  configuring them during provisioning would set them for the IT admin account
+  and leave the person who receives the machine on Windows' defaults. The policy
+  keys cover every account and outrank a user's own scheme.
 - **End-user setup** — leave Windows OOBE to whoever receives the machine,
   pre-create a named local account, or have provisioning prompt the technician
   at first boot. Workgroup, Active Directory domain join, or leave the device
@@ -201,6 +222,12 @@ logic that already exists rather than a rewrite. CI only builds the macOS app.
   says so before every build.
 - `Provision.ps1` deletes `config.json` and the staged `unattend.xml` copies from
   the target machine once it has consumed them.
+- Joining Wi-Fi turns Location services on for the length of the connect, and
+  turns them back off afterwards. Windows 11 24H2 put the WLAN API behind that
+  permission, so `netsh wlan connect` fails with "Access is denied" without it.
+  Only the settings that were not already permissive are touched, each is
+  restored to the exact value it had, and the log records both the change and
+  the restore.
 - Enabling BitLocker writes the recovery key to `C:\ImageHub\logs\` so you can
   collect it at handover. Move it into your key escrow and delete the file — both
   the app and the script warn about this.

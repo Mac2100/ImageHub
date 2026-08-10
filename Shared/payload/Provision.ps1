@@ -204,6 +204,9 @@ $script:StepTotal = 12 + @(Get-Setting $Config 'apps' @()).Count `
 if ([string](Get-Setting (Get-Setting $System 'activation') 'mode' 'automatic') -ne 'skip') {
     $script:StepTotal++
 }
+# Both are their own step only when asked for, so the bar counts them the same way.
+if ([int](Get-Setting $System 'screenLockMinutes' 0) -gt 0) { $script:StepTotal++ }
+if (Get-Setting $System 'managePowerTimeouts' $false) { $script:StepTotal++ }
 
 if (Get-Setting $System 'showProvisioningScreen' $true) {
     # The logo has to exist before the screen starts, so stage assets early.
@@ -255,6 +258,115 @@ if ($script:IsElevated) {
 # ---------------------------------------------------------------------------
 # 1. Network - first, because everything else may need it
 # ---------------------------------------------------------------------------
+
+<#
+    Windows 11 24H2 moved the WLAN API behind the location permission, and
+    "netsh wlan connect" calls WlanGetAvailableNetworkList underneath. Storing a
+    profile still works; connecting does not. A real run showed exactly that
+    shape -- "Profile stored: Profile DCE-Public is added on interface Wi-Fi"
+    immediately followed by "Network shell commands need location permission to
+    access WLAN information [...] WlanGetAvailableNetworkList returns error 5:
+    Access is denied", and then thirty seconds of an adapter that never
+    associated.
+
+    A freshly imaged machine has location off, because nothing turned it on:
+    the answer file skips the OOBE privacy pages. So the permission has to be
+    granted here or the connect cannot work.
+
+    It is granted for the length of the connect and then put back. Provisioning
+    switches telemetry and consumer features off two steps later, and quietly
+    leaving Location services on afterwards would undercut that -- an imaging
+    tool should not be the reason a setting the operator never asked for is
+    enabled. Association survives the restore: the permission gates apps calling
+    the WLAN API, not the profile, and Wireless AutoConfig reconnects on its own
+    afterwards.
+#>
+$LocationConsentKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+$LocationPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'
+
+function Get-LocationValue {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+    try {
+        return (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name
+    } catch {
+        return $null
+    }
+}
+
+function Grant-LocationAccess {
+    <#
+        Returns what it changed rather than what it set, so the restore can put
+        back exactly the previous state -- including removing a value that was
+        not there to begin with. Wrapped in a hashtable because returning a bare
+        array of one element would unroll to the element itself, and a hashtable
+        reports its key count as .Count.
+    #>
+    $changed = @()
+
+    # The master toggle and the desktop-app toggle are separate: netsh is a
+    # non-packaged app, so granting only the first still leaves it denied.
+    foreach ($path in @($LocationConsentKey, (Join-Path $LocationConsentKey 'NonPackaged'))) {
+        try {
+            $before = Get-LocationValue -Path $path -Name 'Value'
+            if ($before -eq 'Allow') { continue }
+            if (-not (Test-Path -LiteralPath $path)) {
+                New-Item -Path $path -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -LiteralPath $path -Name 'Value' -Value 'Allow' `
+                -PropertyType String -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $path; Name = 'Value'; Before = $before }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't grant location access at ${path}: " +
+                $_.Exception.Message)
+        }
+    }
+
+    # Group Policy overrides the consent store outright, so a machine with this
+    # set stays denied no matter what the toggles say.
+    if ((Get-LocationValue -Path $LocationPolicyKey -Name 'DisableLocation') -eq 1) {
+        try {
+            New-ItemProperty -LiteralPath $LocationPolicyKey -Name 'DisableLocation' -Value 0 `
+                -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $LocationPolicyKey; Name = 'DisableLocation'; Before = 1 }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't clear the DisableLocation policy: " +
+                $_.Exception.Message)
+        }
+    }
+
+    if (@($changed).Count -gt 0) {
+        Write-Log -Message ("Granted location access to the WLAN API for the connect " +
+            "($(@($changed).Count) setting(s) changed, restored afterwards).")
+    }
+    return @{ Changes = $changed }
+}
+
+function Restore-LocationAccess {
+    param($State)
+    $changes = @($State.Changes)
+    foreach ($change in $changes) {
+        try {
+            if ($null -eq $change.Before) {
+                Remove-ItemProperty -LiteralPath $change.Path -Name $change.Name -ErrorAction Stop
+            } else {
+                Set-ItemProperty -LiteralPath $change.Path -Name $change.Name `
+                    -Value $change.Before -ErrorAction Stop
+            }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't restore $($change.Name) under " +
+                "$($change.Path), so it is still set for the connect: $($_.Exception.Message)")
+        }
+    }
+    if ($changes.Count -gt 0) {
+        Write-Log -Message 'Location settings put back the way they were found.'
+    }
+}
+
+function Test-LocationDenied {
+    <# The two things netsh says when the permission is what stopped it. #>
+    param([string]$Text)
+    return ($Text -match 'location permission' -or $Text -match 'WlanGetAvailableNetworkList')
+}
 
 <#
     Hands the Wi-Fi profile to a scheduled task for later.
@@ -320,8 +432,27 @@ function Register-DeferredWifiJoin {
         Register-ScheduledTask -TaskName 'ImageHubJoinWifi' -Action $action -Trigger $triggers `
             -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
 
-        Write-Log -Level OK -Message ("Registered ImageHubJoinWifi; it will join $Ssid once a " +
-            'wireless interface exists.')
+        <#
+            Start it now as well as registering it.
+
+            Both triggers are already in the past by the time we get here: the task
+            is created during provisioning, which is itself running at first logon,
+            and the machine started well before that. So nothing would have fired
+            until somebody next signed in or rebooted -- a machine could sit there
+            all afternoon with the driver installed and the task waiting for an
+            event that had already happened. Starting it means it begins its wait
+            immediately, which is the window where Windows Update actually delivers
+            the driver.
+        #>
+        try {
+            Start-ScheduledTask -TaskName 'ImageHubJoinWifi' -ErrorAction Stop
+            Write-Log -Level OK -Message ("Registered and started ImageHubJoinWifi; it will join " +
+                "$Ssid as soon as a wireless interface exists, and again at the next logon or " +
+                'restart if the driver takes longer than that.')
+        } catch {
+            Write-Log -Level OK -Message ("Registered ImageHubJoinWifi (couldn't start it now: " +
+                "$($_.Exception.Message)); it will join $Ssid at the next logon or restart.")
+        }
         return $true
     } catch {
         Write-Log -Level WARN -Message "Couldn't defer the Wi-Fi join: $($_.Exception.Message)"
@@ -446,29 +577,46 @@ $sharedKey
         }
         Write-Log -Level OK -Message "Profile stored: $addedText"
 
-        $connect = & netsh.exe wlan connect name="$ssid" 2>&1
-        $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
-        Write-Log -Level INFO -Message "Connect requested: $connectText"
-
-        <#
-            Association takes a few seconds, and on a machine that is already on
-            Ethernet Windows is in no hurry about it. Poll rather than declare
-            victory: "State : connected" against our SSID is the only thing that
-            actually means joined.
-        #>
+        $location = Grant-LocationAccess
         $joined = $false
-        for ($attempt = 0; $attempt -lt 15; $attempt++) {
-            Start-Sleep -Seconds 2
-            $state = & netsh.exe wlan show interfaces 2>&1
-            $stateText = ($state -join ' ')
-            if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($ssid)) {
-                $joined = $true
-                break
+        $state = @()
+        $connectText = ''
+        try {
+            $connect = & netsh.exe wlan connect name="$ssid" 2>&1
+            $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
+            Write-Log -Level INFO -Message "Connect requested: $connectText"
+
+            <#
+                Association takes a few seconds, and on a machine that is already on
+                Ethernet Windows is in no hurry about it. Poll rather than declare
+                victory: "State : connected" against our SSID is the only thing that
+                actually means joined.
+            #>
+            for ($attempt = 0; $attempt -lt 15; $attempt++) {
+                Start-Sleep -Seconds 2
+                $state = & netsh.exe wlan show interfaces 2>&1
+                $stateText = ($state -join ' ')
+                if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($ssid)) {
+                    $joined = $true
+                    break
+                }
             }
+        } finally {
+            Restore-LocationAccess -State $location
         }
 
         if ($joined) {
             Write-Log -Level OK -Message "Connected to $ssid."
+        } elseif (Test-LocationDenied $connectText) {
+            <#
+                Granting the permission is the fix, so reaching here means it could
+                not be granted -- Group Policy owning Location services is the usual
+                reason. Say that, rather than blaming Ethernet for it.
+            #>
+            throw ("Stored the profile for $ssid but Windows refused the connect: the WLAN " +
+                'API needs location permission and it could not be granted, which usually ' +
+                'means Group Policy owns Location services on this machine. The profile is ' +
+                'saved and Windows will use it once the permission is available.')
         } else {
             $current = (($state | Where-Object { "$_" -match 'State\s*:|SSID\s*:' }) -join '; ')
             throw ("Stored the profile for $ssid but the adapter did not join within 30s. " +
@@ -558,6 +706,54 @@ $activation = Get-Setting $System 'activation'
 $activationMode = [string](Get-Setting $activation 'mode' 'automatic')
 
 <#
+    Runs a program with a hard time limit and captures what it said.
+
+    Everything expensive in this script is bounded -- installers, the network
+    probe, the account prompt -- except, until now, the two things activation
+    depends on. Provisioning stopped dead at "Activating Windows" on a machine
+    with no name resolution: slmgr's /ato returned 0x80072EE7 and the licence
+    status query that followed never came back. Reading
+    SoftwareLicensingProduct makes the Software Protection service re-evaluate
+    the licence, and on an offline machine that can block indefinitely.
+
+    A child process can be killed. An in-process WMI call cannot, which is why
+    the status query below runs out-of-process too.
+#>
+function Invoke-Bounded {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$Arguments = '',
+        [int]$TimeoutSeconds = 90
+    )
+
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $FilePath
+    $info.Arguments = $Arguments
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $info
+    [void]$process.Start()
+
+    # Start reading before waiting: a child that fills the pipe buffer blocks
+    # forever if nobody is draining it, which would defeat the timeout.
+    $out = $process.StandardOutput.ReadToEndAsync()
+    $err = $process.StandardError.ReadToEndAsync()
+
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $process.Kill() } catch { }
+        return [pscustomobject]@{ TimedOut = $true; ExitCode = -1; Output = '' }
+    }
+
+    $text = ((($out.Result + "`n" + $err.Result) -split "`r?`n" |
+        Where-Object { $_.Trim() }) -join '; ')
+    return [pscustomobject]@{ TimedOut = $false; ExitCode = $process.ExitCode; Output = $text }
+}
+
+<#
     slmgr.vbs is the only supported way to install a key or trigger activation.
     Under wscript it reports through a message box, which on an unattended run
     means an invisible dialog nobody dismisses; cscript keeps everything on
@@ -565,39 +761,70 @@ $activationMode = [string](Get-Setting $activation 'mode' 'automatic')
 #>
 function Invoke-Slmgr {
     param([Parameter(Mandatory)][string[]]$Arguments)
-    $output = & "$env:SystemRoot\System32\cscript.exe" //Nologo `
-        "$env:SystemRoot\System32\slmgr.vbs" @Arguments 2>&1
-    $text = (($output | Where-Object { $_ -and $_.ToString().Trim() }) -join '; ')
+    $line = '//Nologo "' + "$env:SystemRoot\System32\slmgr.vbs" + '" ' + ($Arguments -join ' ')
+    $result = Invoke-Bounded -FilePath "$env:SystemRoot\System32\cscript.exe" `
+        -Arguments $line -TimeoutSeconds 120
+    if ($result.TimedOut) {
+        Write-Log -Level WARN -Message ('slmgr ' + ($Arguments -join ' ') +
+            ' did not return within 120s and was stopped.')
+        return ''
+    }
     # Logged here rather than at the call sites: Write-Log's -Message is a
     # mandatory string, and a silent slmgr run would fail the binding.
-    if ($text) { Write-Log -Level INFO -Message $text }
-    return $text
+    if ($result.Output) { Write-Log -Level INFO -Message $result.Output }
+    return $result.Output
 }
 
 <#
-    LicenseStatus 1 is "Licensed"; anything else leaves the watermark up. The
-    ApplicationID filter is the Windows product itself, so an Office licence on
-    the same machine cannot be mistaken for it.
+    Answers one question: is Windows licensed?
+
+    It used to ask a subtly different one -- "what is the status of the first
+    Windows SKU that has a product key?" -- and got it wrong on a machine that
+    activated perfectly. SoftwareLicensingProduct holds an instance per SKU, and a
+    machine that has had more than one key installed over its life has more than
+    one carrying a PartialProductKey. Select-Object -First 1 then picks whichever
+    WMI happens to return first, which on that run was a stale unlicensed entry:
+    slmgr reported "Product activated successfully" and this reported status -1
+    for two and a half minutes until the deadline gave up.
+
+    Asking whether *any* keyed Windows SKU is licensed has no such ordering
+    dependence. The child also prints a word rather than a number, so parsing
+    cannot turn stray output into a plausible-looking status.
+
+    Deliberately out-of-process and time-limited: see Invoke-Bounded.
 #>
-function Get-ActivationStatus {
-    try {
-        $windows = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
-            Where-Object {
-                $_.ApplicationID -eq '55c92734-d682-4d71-983e-d6ec3f16059f' -and
-                $_.PartialProductKey
-            } | Select-Object -First 1
-        if ($windows) { return [int]$windows.LicenseStatus }
-    } catch {
-        Write-Log -Level WARN -Message "Couldn't read the licence status: $($_.Exception.Message)"
+function Get-ActivationState {
+    $probe = @'
+try {
+  $licensed = Get-CimInstance -ClassName SoftwareLicensingProduct -ErrorAction Stop |
+    Where-Object {
+      $_.ApplicationID -eq "55c92734-d682-4d71-983e-d6ec3f16059f" -and
+      $_.PartialProductKey -and $_.LicenseStatus -eq 1
     }
-    return -1
+  if ($licensed) { "LICENSED" } else { "NOTLICENSED" }
+} catch { "UNREADABLE" }
+'@
+    # EncodedCommand sidesteps every layer of quoting between here and the child.
+    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($probe))
+    $result = Invoke-Bounded `
+        -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+        -Arguments "-NoProfile -EncodedCommand $encoded" -TimeoutSeconds 60
+
+    if ($result.TimedOut) {
+        Write-Log -Level WARN -Message ('Reading the licence status timed out. The Software ' +
+            'Protection service is usually wedged on a machine with no internet.')
+        return 'unreadable'
+    }
+    if ($result.Output -match 'LICENSED' -and $result.Output -notmatch 'NOTLICENSED') { return 'licensed' }
+    if ($result.Output -match 'NOTLICENSED') { return 'notlicensed' }
+    return 'unreadable'
 }
 
 if ($activationMode -eq 'skip') {
     Write-Log -Level INFO -Message 'Activation is set to leave-alone; not touching it.'
 } else {
     Invoke-Step 'Activating Windows' {
-        if ((Get-ActivationStatus) -eq 1) {
+        if ((Get-ActivationState) -eq 'licensed') {
             Write-Log -Level OK -Message 'Windows is already activated.'
             return
         }
@@ -621,12 +848,24 @@ if ($activationMode -eq 'skip') {
             # explicitly covers the case where the image was applied with a
             # different key already in place, which is the usual reason a machine
             # that shipped with Windows comes back unactivated.
+            # Out-of-process and bounded for the same reason as the status read:
+            # this is the same WMI provider, and it can block just as long.
             $oemKey = ''
-            try {
-                $oemKey = [string](Get-CimInstance -ClassName SoftwareLicensingService `
-                    -ErrorAction Stop).OA3xOriginalProductKey
-            } catch {
-                Write-Log -Level WARN -Message "Couldn't read the firmware key: $($_.Exception.Message)"
+            $keyScript = @'
+try {
+  (Get-CimInstance -ClassName SoftwareLicensingService -ErrorAction Stop).OA3xOriginalProductKey
+} catch { "" }
+'@
+            $keyResult = Invoke-Bounded `
+                -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+                -Arguments ('-NoProfile -EncodedCommand ' + [Convert]::ToBase64String(
+                    [System.Text.Encoding]::Unicode.GetBytes($keyScript))) -TimeoutSeconds 60
+            if ($keyResult.TimedOut) {
+                Write-Log -Level WARN -Message 'Reading the firmware key timed out.'
+            } else {
+                # A product key is five groups of five, and nothing else on the line.
+                $match = [regex]::Match($keyResult.Output, '[A-Z0-9]{5}(-[A-Z0-9]{5}){4}')
+                if ($match.Success) { $oemKey = $match.Value }
             }
 
             if (-not [string]::IsNullOrWhiteSpace($oemKey)) {
@@ -639,18 +878,44 @@ if ($activationMode -eq 'skip') {
 
         $result = Invoke-Slmgr @('/ato')
 
-        # /ato returns before the licence state settles on some machines.
-        $status = Get-ActivationStatus
-        for ($i = 0; $i -lt 6 -and $status -ne 1; $i++) {
-            Start-Sleep -Seconds 5
-            $status = Get-ActivationStatus
+        <#
+            slmgr's own word first. It is the thing that performed the activation,
+            so when it says the product activated there is nothing to poll for --
+            and disbelieving it is exactly how a successful activation came to be
+            reported as a failure.
+        #>
+        if ($result -match 'successfully') {
+            Write-Log -Level OK -Message 'Windows is activated.'
+            return
         }
 
-        if ($status -eq 1) {
-            Write-Log -Level OK -Message 'Windows is activated.'
-        } else {
-            throw "Windows is still not activated (licence status $status). $result"
+        <#
+            Otherwise poll, because /ato can return before the licence state
+            settles -- but against a deadline, and abandoning the poll the moment
+            the read stops answering, since asking again would only wait again.
+        #>
+        $deadline = (Get-Date).AddMinutes(2)
+        $state = Get-ActivationState
+        while ($state -eq 'notlicensed' -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 5
+            $state = Get-ActivationState
         }
+
+        if ($state -eq 'licensed') {
+            Write-Log -Level OK -Message 'Windows is activated.'
+            return
+        }
+
+        # 0x80072EE7 is "the server name could not be resolved" -- no DNS, so no
+        # internet. Worth naming, because it is not an activation problem and
+        # Windows retries on its own schedule once the machine is online.
+        if ($result -match '0x80072EE7|0x8007232B|0x80072EFD|0x800705B4') {
+            throw ("This machine has no internet connection, so activation could not " +
+                "reach Microsoft ($result). The key is installed; Windows will activate " +
+                'itself once the machine is online. Plug in Ethernet or wait for Wi-Fi.')
+        }
+
+        throw "Windows is not activated ($state). $result"
     }
 }
 
@@ -687,6 +952,91 @@ Invoke-Step 'Applying power settings' {
         Set-RegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' `
             -Name 'HiberbootEnabled' -Value 0
         Write-Log -Level OK -Message "Fast startup disabled."
+    }
+}
+
+<#
+    Screen lock and the display/sleep/lid timeouts, both written as machine
+    policy and deliberately not through powercfg.
+
+    Power schemes are per-user. powercfg here would configure ITAdmin -- an
+    account that is often hidden straight afterwards and never signed into again
+    -- and leave the person who actually receives the machine on Windows'
+    defaults. The Power Management keys under HKLM\SOFTWARE\Policies are what
+    Group Policy itself writes: one place, every account, and they take
+    precedence over whatever scheme a user later picks.
+
+    The same reasoning puts the lock on InactivityTimeoutSecs, which is HKLM, and
+    not on the per-user screensaver values.
+#>
+function Get-PowerSettingGuid {
+    <#
+        Asks powercfg which GUID sits behind an alias instead of hardcoding it.
+        The display and sleep GUIDs are easy to confirm; the lid one is quoted
+        more often than it is sourced, and the machine holds the authoritative
+        answer either way.
+    #>
+    param([Parameter(Mandatory)][string]$Alias)
+    foreach ($line in (& powercfg.exe /aliases 2>&1)) {
+        if ("$line".Trim() -match '^([0-9a-fA-F-]{36})\s+(\S+)$' -and $Matches[2] -eq $Alias) {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
+function Set-PowerSettingPolicy {
+    param(
+        [Parameter(Mandatory)][string]$Alias,
+        [Parameter(Mandatory)][int]$AC,
+        [Parameter(Mandatory)][int]$DC,
+        [Parameter(Mandatory)][string]$What
+    )
+    $guid = Get-PowerSettingGuid -Alias $Alias
+    if (-not $guid) {
+        Write-Log -Level WARN -Message ("powercfg does not list a $Alias setting on this " +
+            "build, so $What was left alone.")
+        return $false
+    }
+    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\$guid"
+    Set-RegistryValue -Path $path -Name 'ACSettingIndex' -Value $AC
+    Set-RegistryValue -Path $path -Name 'DCSettingIndex' -Value $DC
+    return $true
+}
+
+$screenLockMinutes = [int](Get-Setting $System 'screenLockMinutes' 0)
+if ($screenLockMinutes -gt 0) {
+    Invoke-Step "Locking the screen after $screenLockMinutes minute(s) of inactivity" {
+        Set-RegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
+            -Name 'InactivityTimeoutSecs' -Value ($screenLockMinutes * 60)
+        Write-Log -Level OK -Message 'Machine inactivity limit set; it covers every account.'
+    }
+}
+
+if (Get-Setting $System 'managePowerTimeouts' $false) {
+    Invoke-Step 'Applying display, sleep and lid policy' {
+        # Windows stores these timeouts in seconds; the template speaks minutes.
+        $displayAC = [int](Get-Setting $System 'displayOffMinutesAC' 15) * 60
+        $displayDC = [int](Get-Setting $System 'displayOffMinutesDC' 5) * 60
+        $sleepAC = [int](Get-Setting $System 'sleepMinutesAC' 0) * 60
+        $sleepDC = [int](Get-Setting $System 'sleepMinutesDC' 30) * 60
+        # Lid actions are an enumeration, not a duration, so they pass through.
+        $lidAC = [int](Get-Setting $System 'lidCloseActionAC' 1)
+        $lidDC = [int](Get-Setting $System 'lidCloseActionDC' 1)
+
+        $set = 0
+        if (Set-PowerSettingPolicy -Alias 'VIDEOIDLE' -AC $displayAC -DC $displayDC `
+                -What 'the display timeout') { $set++ }
+        if (Set-PowerSettingPolicy -Alias 'STANDBYIDLE' -AC $sleepAC -DC $sleepDC `
+                -What 'the sleep timeout') { $set++ }
+        if (Set-PowerSettingPolicy -Alias 'LIDACTION' -AC $lidAC -DC $lidDC `
+                -What 'the lid close action') { $set++ }
+
+        if ($set -eq 0) {
+            throw 'None of the power settings could be resolved, so nothing was applied.'
+        }
+        Write-Log -Level OK -Message ("Power policy applied for every account " +
+            "($set of 3 setting(s)).")
     }
 }
 
@@ -1020,8 +1370,24 @@ if ($apps.Count -gt 0) {
                         $output | ForEach-Object { Add-Content -LiteralPath $LogFile -Value "      $_" }
                     }
 
-                    # winget uses 0 for success and 0x8A150061 for "already installed".
-                    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335135) {
+                    <#
+                        winget uses 0 for success, and two more codes that also mean
+                        the machine ends up with the app -- which is the only thing
+                        this step is trying to achieve:
+
+                          -1978335135 / 0x8A150061  already installed, nothing tried
+                          -1978335189 / 0x8A15002B  already installed, nothing newer
+
+                        The second is what anything Windows 11 preinstalls returns.
+                        A real run logged "[FAIL] OneDrive did not install: winget
+                        exited with -1978335189 - Found an existing package already
+                        installed [...] No newer package versions are available",
+                        which is a machine in exactly the wanted state being called
+                        a failure. winget only reports it after finding an existing
+                        install, so it can never mean the app is absent.
+                    #>
+                    $alreadyPresent = @(-1978335135, -1978335189)
+                    if ($LASTEXITCODE -ne 0 -and $alreadyPresent -notcontains $LASTEXITCODE) {
                         # The exit code alone says nothing useful. winget's own last
                         # lines usually name the reason outright -- an unaccepted
                         # agreement, no applicable installer for this architecture,
@@ -1053,7 +1419,13 @@ if ($apps.Count -gt 0) {
 
                         throw "winget exited with $LASTEXITCODE$detail"
                     }
-                    Write-Log -Level OK -Message "$name installed."
+                    # Distinguished rather than both logged as "installed": a run
+                    # that changed nothing should not read like one that did.
+                    if ($alreadyPresent -contains $LASTEXITCODE) {
+                        Write-Log -Level OK -Message "$name is already installed and up to date."
+                    } else {
+                        Write-Log -Level OK -Message "$name installed."
+                    }
                 }
                 'installer' {
                     $relative = Get-Setting $app 'installer'
@@ -1114,7 +1486,74 @@ if ($apps.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Branding
+# 11. Microsoft 365 through the Office Deployment Tool
+# ---------------------------------------------------------------------------
+
+<#
+    winget's Microsoft.Office package fails on nearly every run with "Installer
+    hash does not match; this cannot be overridden when running as admin" -- winget
+    pins a hash, Microsoft ships a new installer behind the same URL, and the
+    manifest is stale more often than not. Nothing on this side can fix that.
+
+    The ODT is Microsoft's own supported path. ImageHub bundles the operator's
+    setup.exe and generates configuration.xml at build time, so all this step has
+    to do is run it and interpret the result.
+#>
+
+$office = Get-Setting $Config 'microsoft365'
+if ([bool](Get-Setting $office 'enabled' $false)) {
+    $script:StepTotal++
+    Invoke-Step 'Installing Microsoft 365' {
+        $setup = Join-Path $Root ([string](Get-Setting $office 'setup' ''))
+        $configuration = Join-Path $Root ([string](Get-Setting $office 'configuration' ''))
+
+        if (-not (Test-Path -LiteralPath $setup)) {
+            throw "The Office Deployment Tool is missing from the payload: $setup"
+        }
+        if (-not (Test-Path -LiteralPath $configuration)) {
+            throw "The Office configuration is missing from the payload: $configuration"
+        }
+
+        # Office comes down from Microsoft's CDN, so no network means no install.
+        # Say that plainly rather than letting setup.exe fail with a bare code.
+        if (-not (Wait-ForNetwork -TimeoutSeconds 60)) {
+            Write-Log -Level WARN -Message 'No ping response; attempting the Office install anyway.'
+        }
+
+        $timeoutMinutes = [int](Get-Setting $office 'timeoutMinutes' 90)
+        if ($timeoutMinutes -lt 5) { $timeoutMinutes = 90 }
+        Write-Log -Level INFO -Message ('Installing Microsoft 365 with the Office Deployment ' +
+            "Tool. This downloads several GB and may take a while (limit $timeoutMinutes minutes).")
+
+        $result = Invoke-Bounded -FilePath $setup `
+            -Arguments ('/configure "' + $configuration + '"') `
+            -TimeoutSeconds ($timeoutMinutes * 60)
+
+        if ($result.TimedOut) {
+            throw "The Office install did not finish within $timeoutMinutes minutes and was stopped."
+        }
+        if ($result.Output) { Write-Log -Level INFO -Message $result.Output }
+
+        <#
+            setup.exe returns 0 on success and 1 for "a restart is needed", which is
+            not a failure. 17002 is the ODT's "the install was cancelled or another
+            Click-to-Run operation is in progress" -- worth naming because an OEM
+            trial mid-uninstall causes it and a retry usually succeeds.
+        #>
+        if ($result.ExitCode -eq 0 -or $result.ExitCode -eq 1) {
+            Write-Log -Level OK -Message 'Microsoft 365 installed.'
+        } elseif ($result.ExitCode -eq 17002) {
+            throw ('Another Click-to-Run operation was already in progress, so Office did ' +
+                'not install. A preinstalled Office trial being removed is the usual cause; ' +
+                'running the step again once it settles normally works.')
+        } else {
+            throw "The Office Deployment Tool exited with $($result.ExitCode)."
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 12. Branding
 # ---------------------------------------------------------------------------
 
 $wallpaper = Get-Setting $System 'wallpaper' ''
@@ -1216,7 +1655,7 @@ if ($startLayout) {
 }
 
 # ---------------------------------------------------------------------------
-# 12. Windows Update policy
+# 13. Windows Update policy
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Applying the Windows Update policy' {
@@ -1253,7 +1692,7 @@ if (Get-Setting $System 'installUpdates' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 13. Accounts
+# 14. Accounts
 # ---------------------------------------------------------------------------
 
 $endUserMode = Get-Setting $EndUser 'mode' 'leaveOOBE'
@@ -1375,7 +1814,7 @@ if (Get-Setting $Admin 'passwordNeverExpires' $true) {
 }
 
 # ---------------------------------------------------------------------------
-# 14. Encryption
+# 15. Encryption
 # ---------------------------------------------------------------------------
 
 $bitLocker = Get-Setting $System 'bitLocker' 'off'
@@ -1439,7 +1878,7 @@ if (Get-Setting $System 'disableRecoveryEnvironment' $false) {
 }
 
 # ---------------------------------------------------------------------------
-# 15. Registry tweaks from the template
+# 16. Registry tweaks from the template
 # ---------------------------------------------------------------------------
 
 $tweaks = @(Get-Setting $System 'registryTweaks' @())
@@ -1459,7 +1898,7 @@ if ($tweaks.Count -gt 0) {
 }
 
 # ---------------------------------------------------------------------------
-# 16. Custom scripts
+# 17. Custom scripts
 # ---------------------------------------------------------------------------
 
 function Invoke-CustomScripts {
@@ -1496,7 +1935,7 @@ function Invoke-CustomScripts {
 Invoke-CustomScripts -Phase 'provision'
 
 # ---------------------------------------------------------------------------
-# 17. Hide the admin account, if asked
+# 18. Hide the admin account, if asked
 # ---------------------------------------------------------------------------
 
 if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
@@ -1514,7 +1953,7 @@ if (Get-Setting $Admin 'hideFromLoginScreen' $false) {
 Invoke-CustomScripts -Phase 'finalize'
 
 # ---------------------------------------------------------------------------
-# 18. Clean up secrets and report
+# 19. Clean up secrets and report
 # ---------------------------------------------------------------------------
 
 Invoke-Step 'Clearing staged credentials' {

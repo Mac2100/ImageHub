@@ -87,6 +87,8 @@ struct AppsTab: View {
                     ]
                 )
             }
+
+            Microsoft365Section(office: $draft.microsoft365)
         }
         .sheet(isPresented: $showingCatalog) {
             AppCatalogSheet(
@@ -412,6 +414,42 @@ struct SystemTab: View {
             }
 
             Section {
+                MinutesPicker(title: "Lock the screen after", minutes: $draft.system.screenLockMinutes)
+                Toggle("Manage display, sleep and lid behaviour",
+                       isOn: $draft.system.managePowerTimeouts)
+                if draft.system.managePowerTimeouts {
+                    MinutesPicker(title: "Display off (plugged in)",
+                                  minutes: $draft.system.displayOffMinutesAC)
+                    MinutesPicker(title: "Display off (on battery)",
+                                  minutes: $draft.system.displayOffMinutesDC)
+                    MinutesPicker(title: "Sleep (plugged in)",
+                                  minutes: $draft.system.sleepMinutesAC)
+                    MinutesPicker(title: "Sleep (on battery)",
+                                  minutes: $draft.system.sleepMinutesDC)
+                    Picker("Lid closed (plugged in)", selection: $draft.system.lidCloseActionAC) {
+                        ForEach(SystemSpec.LidAction.allCases) { action in
+                            Text(action.label).tag(action)
+                        }
+                    }
+                    Picker("Lid closed (on battery)", selection: $draft.system.lidCloseActionDC) {
+                        ForEach(SystemSpec.LidAction.allCases) { action in
+                            Text(action.label).tag(action)
+                        }
+                    }
+                }
+            } header: {
+                Text("Screen lock and power timeouts")
+            } footer: {
+                SectionCaption(
+                    text: "Written as machine policy, so every account gets them - including the "
+                        + "end-user account provisioning creates. Power schemes are per-user, so "
+                        + "the policy route is the only one that reaches the person who receives "
+                        + "the machine. Windows shows these as managed by your organisation, and "
+                        + "they override \"Never sleep on mains power\" above."
+                )
+            }
+
+            Section {
                 Toggle("Enable Remote Desktop", isOn: $draft.system.enableRemoteDesktop)
                 Toggle("Allow ping (ICMP echo) through the firewall", isOn: $draft.system.allowPing)
             } header: {
@@ -604,6 +642,40 @@ struct SystemTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Minute picker for the power timeouts. Zero reads as "Never" because that is
+/// exactly what Windows does with a zero timeout.
+struct MinutesPicker: View {
+    let title: String
+    @Binding var minutes: Int
+
+    private static let presets = [0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120]
+
+    /// A hand-edited template can hold a value no preset offers, and a Picker
+    /// with no matching tag renders blank and silently rewrites the value on the
+    /// next edit. Carry the odd value instead of losing it.
+    private var choices: [Int] {
+        MinutesPicker.presets.contains(minutes)
+            ? MinutesPicker.presets
+            : (MinutesPicker.presets + [minutes]).sorted()
+    }
+
+    var body: some View {
+        Picker(title, selection: $minutes) {
+            ForEach(choices, id: \.self) { value in
+                Text(MinutesPicker.label(value)).tag(value)
+            }
+        }
+    }
+
+    static func label(_ minutes: Int) -> String {
+        switch minutes {
+        case ...0: return "Never"
+        case 1: return "1 minute"
+        default: return "\(minutes) minutes"
+        }
     }
 }
 
@@ -864,5 +936,97 @@ struct SilentSwitchField: View {
     private func sync() {
         preset = SilentSwitchPreset.matching(arguments)
         if preset == .custom { custom = arguments }
+    }
+}
+
+// MARK: - Microsoft 365
+
+/// Office gets its own section rather than being one row among the winget
+/// packages, because it does not install like one.
+///
+/// `Microsoft.Office` in winget failed on every real run — winget pins an
+/// installer hash and Microsoft ships a new installer behind the same URL, so the
+/// manifest is stale more often than not and no caller can override it. The Office
+/// Deployment Tool is Microsoft's own supported path.
+///
+/// One decision wide on purpose: which apps. The Deployment Tool has a dozen other
+/// knobs and each of them had a right answer here, so they are fixed in
+/// `Microsoft365Spec` with the reasoning next to them rather than offered up as
+/// choices someone could get wrong.
+struct Microsoft365Section: View {
+    @Binding var office: Microsoft365Spec
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Microsoft 365")
+                    .font(.headline)
+                Spacer()
+                Toggle("Install Microsoft 365", isOn: $office.enabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            if !office.enabled {
+                Text(
+                    """
+                    Off. Turning it on needs nothing from you — ImageHub fetches \
+                    Microsoft's Office Deployment Tool itself and installs the apps you \
+                    tick below.
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Install these apps")
+                        .font(.subheadline.weight(.medium))
+                    LazyVGrid(
+                        columns: [GridItem(alignment: .leading), GridItem(alignment: .leading)],
+                        alignment: .leading,
+                        spacing: 4
+                    ) {
+                        ForEach(Microsoft365Spec.availableApps, id: \.id) { app in
+                            Toggle(app.label, isOn: included(app.id))
+                                .toggleStyle(.checkbox)
+                        }
+                    }
+                    Text(
+                        """
+                        Microsoft 365 Apps for enterprise, 64-bit, Current channel, in this \
+                        template's display language. Teams and OneDrive are left to the app \
+                        catalog and to Windows itself, so Office does not install a second copy \
+                        of either.
+                        """
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .glassCard()
+
+                NoticeBanner(
+                    kind: .info,
+                    title: "Office downloads itself during provisioning",
+                    messages: [
+                        "The Deployment Tool fetches several GB from Microsoft, so the machine needs a network at first boot and this is the longest step in a run."
+                    ]
+                )
+            }
+        }
+    }
+
+    /// A binding per app ID, so the checkboxes read and write one array.
+    private func included(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { office.includedApps.contains(id) },
+            set: { isIncluded in
+                if isIncluded {
+                    if !office.includedApps.contains(id) { office.includedApps.append(id) }
+                } else {
+                    office.includedApps.removeAll { $0 == id }
+                }
+            }
+        )
     }
 }

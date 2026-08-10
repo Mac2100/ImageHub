@@ -61,6 +61,13 @@ enum PayloadBuilder {
             var connectAutomatically: Bool
         }
 
+        struct Microsoft365: Encodable {
+            var enabled: Bool
+            var setup: String
+            var configuration: String
+            var timeoutMinutes: Int
+        }
+
         struct Activation: Encodable {
             var mode: String
             var kmsHost: String
@@ -82,6 +89,18 @@ enum PayloadBuilder {
             var disableSleepOnAC: Bool
             var disableFastStartup: Bool
             var disableHibernation: Bool
+            // Minutes on this side, seconds in the registry. Provision.ps1 does
+            // the conversion, so the config stays readable.
+            var screenLockMinutes: Int
+            var managePowerTimeouts: Bool
+            var displayOffMinutesAC: Int
+            var displayOffMinutesDC: Int
+            var sleepMinutesAC: Int
+            var sleepMinutesDC: Int
+            // Resolved to the numeric LIDACTION values here so the payload
+            // needs no lookup table of its own.
+            var lidCloseActionAC: Int
+            var lidCloseActionDC: Int
             var showFileExtensions: Bool
             var showHiddenFiles: Bool
             var classicContextMenu: Bool
@@ -127,6 +146,7 @@ enum PayloadBuilder {
         var endUser: EndUser
         var identity: Identity
         var apps: [App]
+        var microsoft365: Microsoft365
         var system: System
         var scripts: [Script]
     }
@@ -193,7 +213,44 @@ enum PayloadBuilder {
             )
         }
 
-        // 3. Assets referenced by the template.
+        // 3. Microsoft 365 through the Office Deployment Tool.
+        //
+        // setup.exe is resolved by USBWriter before this runs -- downloaded from
+        // Microsoft or the operator's pinned copy -- and configuration.xml is
+        // generated here so a mistake in it surfaces on this Mac, not on a bench.
+        var office = Config.Microsoft365(
+            enabled: false, setup: "", configuration: "",
+            timeoutMinutes: Microsoft365Spec.timeoutMinutes
+        )
+        if template.microsoft365.enabled {
+            let origin = URL(fileURLWithPath: template.microsoft365.setupPath)
+            guard fm.fileExists(atPath: origin.path) else {
+                throw PayloadError(
+                    message: """
+                        Microsoft 365 is enabled but the Office Deployment Tool setup.exe \
+                        is missing: \(template.microsoft365.setupPath)
+                        """
+                )
+            }
+            let officeDirectory = root.appendingPathComponent("Office", isDirectory: true)
+            try fm.createDirectory(at: officeDirectory, withIntermediateDirectories: true)
+
+            log("Copying the Office Deployment Tool (\(origin.lastPathComponent))…")
+            try fm.copyItem(at: origin, to: officeDirectory.appendingPathComponent("setup.exe"))
+
+            let configuration = OfficeConfigBuilder.xml(for: template)
+            try configuration.write(
+                to: officeDirectory.appendingPathComponent(OfficeConfigBuilder.fileName),
+                atomically: true,
+                encoding: .utf8
+            )
+            office.enabled = true
+            office.setup = "Office\\setup.exe"
+            office.configuration = "Office\\\(OfficeConfigBuilder.fileName)"
+            log("Wrote \(OfficeConfigBuilder.fileName) for Microsoft 365.")
+        }
+
+        // 4. Assets referenced by the template.
         let assets = root.appendingPathComponent("Assets", isDirectory: true)
         func copyAsset(_ path: String, as name: String) throws -> String {
             guard !path.isEmpty else { return "" }
@@ -243,6 +300,7 @@ enum PayloadBuilder {
             template: template,
             secrets: secrets,
             apps: apps,
+            microsoft365: office,
             scripts: scripts,
             wallpaper: wallpaper,
             lockScreen: lockScreen,
@@ -274,6 +332,7 @@ enum PayloadBuilder {
         template: DeploymentTemplate,
         secrets: AnswerFileBuilder.ResolvedSecrets,
         apps: [Config.App],
+        microsoft365 office: Config.Microsoft365,
         scripts: [Config.Script],
         wallpaper: String,
         lockScreen: String,
@@ -308,6 +367,7 @@ enum PayloadBuilder {
                 domain: template.identity.domain
             ),
             apps: apps,
+            microsoft365: office,
             system: Config.System(
                 computerNameTemplate: system.computerNameTemplate,
                 timeZone: system.timeZone,
@@ -317,6 +377,14 @@ enum PayloadBuilder {
                 disableSleepOnAC: system.disableSleepOnAC,
                 disableFastStartup: system.disableFastStartup,
                 disableHibernation: system.disableHibernation,
+                screenLockMinutes: system.screenLockMinutes,
+                managePowerTimeouts: system.managePowerTimeouts,
+                displayOffMinutesAC: system.displayOffMinutesAC,
+                displayOffMinutesDC: system.displayOffMinutesDC,
+                sleepMinutesAC: system.sleepMinutesAC,
+                sleepMinutesDC: system.sleepMinutesDC,
+                lidCloseActionAC: system.lidCloseActionAC.index,
+                lidCloseActionDC: system.lidCloseActionDC.index,
                 showFileExtensions: system.showFileExtensions,
                 showHiddenFiles: system.showHiddenFiles,
                 classicContextMenu: system.classicContextMenu,

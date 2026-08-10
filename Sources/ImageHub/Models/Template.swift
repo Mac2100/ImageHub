@@ -331,6 +331,84 @@ struct EndUserSpec: Codable, Equatable, Hashable {
     }
 }
 
+// MARK: - Microsoft 365
+
+/// Installs Office through the Office Deployment Tool rather than winget.
+///
+/// winget's `Microsoft.Office` fails on nearly every run with "Installer hash does
+/// not match; this cannot be overridden when running as admin" — winget pins a
+/// hash and Microsoft ships a new installer behind the same URL, so the manifest
+/// is stale more often than not and there is nothing a caller can do about it.
+///
+/// Deliberately one decision wide: which apps to install. Everything else the
+/// Deployment Tool can be told is fixed below, because every one of those knobs
+/// had a right answer for this use and offering the wrong answers alongside it
+/// only invited someone to pick one.
+struct Microsoft365Spec: Codable, Equatable, Hashable {
+    var enabled: Bool = false
+
+    /// The apps to install. The Deployment Tool only speaks in exclusions, so
+    /// `OfficeConfigBuilder` inverts this — but "what do I want" is the question a
+    /// technician is actually answering.
+    var includedApps: [String] = ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"]
+
+    /// Pins a specific `setup.exe` instead of the copy ImageHub downloads from
+    /// Microsoft. No UI: the automatic download is the answer for everyone, and
+    /// this exists for a machine whose network will not reach Microsoft's CDN.
+    var setupPath: String = ""
+
+    /// Offered as checkboxes, in the order they appear on screen.
+    static let availableApps: [(id: String, label: String)] = [
+        ("Word", "Word"),
+        ("Excel", "Excel"),
+        ("PowerPoint", "PowerPoint"),
+        ("Outlook", "Outlook"),
+        ("OneNote", "OneNote"),
+        ("Access", "Access"),
+        ("Publisher", "Publisher"),
+    ]
+
+    /// Never installed by the Deployment Tool, and never offered as a choice.
+    ///
+    /// Teams and OneDrive are here because something else already owns them, and
+    /// letting Office install its own copy is how a machine ends up with two. Teams
+    /// comes from the app catalog's `Microsoft.Teams`, which is the current client
+    /// and installs reliably; the copy Office would lay down is the retired one.
+    /// OneDrive ships inbox with Windows 11 and is in the catalog as
+    /// `Microsoft.OneDrive` for anyone who wants it installed or updated
+    /// explicitly — so excluding it here removes a duplicate, not a capability.
+    ///
+    /// Groove is the retired OneDrive for Business client, Lync is Skype for
+    /// Business, and Bing is the search hijacker nobody has ever asked for.
+    static let alwaysExcluded = ["Bing", "Groove", "Lync", "OneDrive", "Teams"]
+
+    /// Microsoft 365 Apps for enterprise — what an organisation with E3/E5 or
+    /// "Apps for enterprise" licences is entitled to, and what winget's
+    /// Microsoft.Office installed before this replaced it.
+    static let productID = "O365ProPlusRetail"
+
+    /// Current is the default channel Microsoft ships and the one that gets
+    /// security fixes soonest.
+    static let channelID = "Current"
+
+    /// 32-bit Office is a legacy choice for old COM add-ins; nothing being imaged
+    /// now wants it.
+    static let architecture = "64"
+
+    /// Office pulls several GB from Microsoft's CDN, so it gets triple what an
+    /// ordinary app install is allowed.
+    static let timeoutMinutes = 90
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = c.v(.enabled, false)
+        includedApps = c.v(.includedApps, ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"])
+        setupPath = c.v(.setupPath, "")
+    }
+}
+
 // MARK: - Identity
 
 struct IdentitySpec: Codable, Equatable, Hashable {
@@ -522,6 +600,33 @@ struct SystemSpec: Codable, Equatable, Hashable {
     var disableFastStartup: Bool = false
     var disableHibernation: Bool = false
 
+    // MARK: Screen lock and power timeouts
+    //
+    // Both land as machine policy, and deliberately not through powercfg. Power
+    // schemes are per-user: a powercfg call during provisioning configures
+    // ITAdmin and leaves the account the machine is actually handed to sitting
+    // on Windows' defaults. The Power Management keys under HKLM\SOFTWARE\
+    // Policies are what Group Policy itself writes, they cover every account,
+    // and they take precedence over a user's own scheme.
+
+    /// Minutes of user inactivity before the session locks. 0 leaves Windows
+    /// alone rather than setting a limit of zero, which means "never" to Windows
+    /// and would read as a deliberate choice in the log when it was not one.
+    var screenLockMinutes: Int = 0
+
+    /// Whether the display, sleep and lid settings below are applied at all.
+    /// Off leaves the machine on Windows' defaults, which is what every template
+    /// written before these existed expects.
+    var managePowerTimeouts: Bool = false
+    /// Minutes before the display turns off. 0 means never.
+    var displayOffMinutesAC: Int = 15
+    var displayOffMinutesDC: Int = 5
+    /// Minutes before the machine sleeps. 0 means never.
+    var sleepMinutesAC: Int = 0
+    var sleepMinutesDC: Int = 30
+    var lidCloseActionAC: LidAction = .sleep
+    var lidCloseActionDC: LidAction = .sleep
+
     var showFileExtensions: Bool = true
     var showHiddenFiles: Bool = false
     var classicContextMenu: Bool = false
@@ -585,6 +690,32 @@ struct SystemSpec: Codable, Equatable, Hashable {
             case .balanced: return "381b4222-f694-41f0-9685-ff5bb260df2e"
             case .highPerformance: return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
             case .powerSaver: return "a1841308-3541-4fab-bc81-f71556f20b4a"
+            }
+        }
+    }
+
+    /// What closing the lid does. Raw values are stable strings for the template
+    /// file; `index` is what the power setting itself stores.
+    enum LidAction: String, Codable, CaseIterable, Identifiable, Hashable {
+        case doNothing, sleep, hibernate, shutDown
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .doNothing: return "Do nothing"
+            case .sleep: return "Sleep"
+            case .hibernate: return "Hibernate"
+            case .shutDown: return "Shut down"
+            }
+        }
+
+        /// The LIDACTION value Windows stores. Fixed by Windows, not by us.
+        var index: Int {
+            switch self {
+            case .doNothing: return 0
+            case .sleep: return 1
+            case .hibernate: return 2
+            case .shutDown: return 3
             }
         }
     }
@@ -666,6 +797,14 @@ struct SystemSpec: Codable, Equatable, Hashable {
         disableSleepOnAC = c.v(.disableSleepOnAC, true)
         disableFastStartup = c.v(.disableFastStartup, false)
         disableHibernation = c.v(.disableHibernation, false)
+        screenLockMinutes = c.v(.screenLockMinutes, 0)
+        managePowerTimeouts = c.v(.managePowerTimeouts, false)
+        displayOffMinutesAC = c.v(.displayOffMinutesAC, 15)
+        displayOffMinutesDC = c.v(.displayOffMinutesDC, 5)
+        sleepMinutesAC = c.v(.sleepMinutesAC, 0)
+        sleepMinutesDC = c.v(.sleepMinutesDC, 30)
+        lidCloseActionAC = c.v(.lidCloseActionAC, LidAction.sleep)
+        lidCloseActionDC = c.v(.lidCloseActionDC, LidAction.sleep)
         showFileExtensions = c.v(.showFileExtensions, true)
         showHiddenFiles = c.v(.showHiddenFiles, false)
         classicContextMenu = c.v(.classicContextMenu, false)
@@ -881,6 +1020,7 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
     var endUser: EndUserSpec = EndUserSpec()
     var identity: IdentitySpec = IdentitySpec()
     var apps: [AppSelection] = []
+    var microsoft365: Microsoft365Spec = Microsoft365Spec()
     var system: SystemSpec = SystemSpec()
     var oobe: OOBESpec = OOBESpec()
     var scripts: [CustomScript] = []
@@ -904,9 +1044,17 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         // Templates keep the package ID they were created with, so a catalog
         // correction has to be applied on the way in or it never reaches them.
         apps = c.v(.apps, []).map(AppCatalog.correctingRenames)
+        microsoft365 = c.v(.microsoft365, Microsoft365Spec())
         system = c.v(.system, SystemSpec())
         oobe = c.v(.oobe, OOBESpec())
         scripts = c.v(.scripts, [])
+
+        // Applied to the two fields it touches, not through `self`, which is not
+        // safely readable until every stored property is assigned. The winget Office
+        // package never worked, so a template still carrying it is moved onto the
+        // Deployment Tool; correcting the catalog alone would never reach a template
+        // already on disk.
+        AppCatalog.migratingOffice(apps: &apps, office: &microsoft365)
     }
 
     var enabledApps: [AppSelection] {
@@ -971,6 +1119,27 @@ struct DeploymentTemplate: Codable, Equatable, Hashable, Identifiable {
         if windows.activation.mode == .kms
             && windows.activation.kmsHost.trimmingCharacters(in: .whitespaces).isEmpty {
             add("Activation is set to use a KMS host but no host is set.", .windows)
+        }
+        if microsoft365.enabled {
+            // An empty path is the normal case: the build downloads the Deployment
+            // Tool from Microsoft and caches it. Only a path that was set and has
+            // since moved is a problem, because that one is a stale pin.
+            if !microsoft365.setupPath.isEmpty
+                && !FileManager.default.fileExists(atPath: microsoft365.setupPath) {
+                add("The Office Deployment Tool setup.exe this template points at is missing.", .apps)
+            }
+            if microsoft365.includedApps.isEmpty {
+                add("Microsoft 365 is on but no Office apps are selected.", .apps)
+            }
+            // Both would run, one would lose, and which one is not worth finding out
+            // on a bench.
+            if apps.contains(where: { $0.enabled && $0.packageID == AppCatalog.officePackageID }) {
+                add(
+                    "Microsoft 365 is set to install twice — once through the Office "
+                        + "Deployment Tool and once through winget. Remove the winget entry.",
+                    .apps
+                )
+            }
         }
         if endUser.mode == .createLocalAccount {
             if endUser.username.trimmingCharacters(in: .whitespaces).isEmpty {

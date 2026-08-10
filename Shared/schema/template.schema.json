@@ -59,6 +59,26 @@
       }
     },
 
+    "microsoft365": {
+      "type": "object",
+      "description": "Installs Office through the Office Deployment Tool. winget's Microsoft.Office package failed on every real run with an installer-hash mismatch caused by Microsoft's own manifest being stale, which no caller can override, so it is no longer in the catalog and a template carrying it is migrated here on load. ImageHub downloads the Deployment Tool from Microsoft and generates configuration.xml at build time. Deliberately one decision wide: which apps. Product (Microsoft 365 Apps for enterprise), channel (Current), architecture (64-bit), language (the template's display language), removing older MSI Office, and leaving updates on are all fixed, because each had one right answer here.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "includedApps": {
+          "type": "array",
+          "items": { "enum": ["Word", "Excel", "PowerPoint", "Outlook", "OneNote", "Access", "Publisher"] },
+          "default": ["Word", "Excel", "PowerPoint", "Outlook", "OneNote"],
+          "description": "The Office apps to install; anything omitted is excluded. Teams and OneDrive are never installed here — Teams comes from the app catalog's Microsoft.Teams (the current client, where Office would install the retired one) and OneDrive ships with Windows 11. Bing, Groove and Lync are always excluded."
+        },
+        "setupPath": {
+          "type": "string",
+          "default": "",
+          "description": "Pins a specific ODT setup.exe instead of the copy ImageHub downloads from Microsoft's CDN. No UI; exists for a machine whose network will not reach the CDN."
+        }
+      }
+    },
+
     "disk": {
       "type": "object",
       "description": "Describes the TARGET MACHINE's disk, not the USB stick.",
@@ -180,6 +200,29 @@
         "disableSleepOnAC": { "type": "boolean", "default": true },
         "disableFastStartup": { "type": "boolean", "default": false },
         "disableHibernation": { "type": "boolean", "default": false },
+        "screenLockMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Minutes of inactivity before the session locks, written as the machine-wide InactivityTimeoutSecs policy so every account is covered. 0 leaves Windows alone."
+        },
+        "managePowerTimeouts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Applies the display, sleep and lid settings below as machine policy. Off leaves Windows' defaults in charge."
+        },
+        "displayOffMinutesAC": { "type": "integer", "minimum": 0, "default": 15 },
+        "displayOffMinutesDC": { "type": "integer", "minimum": 0, "default": 5 },
+        "sleepMinutesAC": { "type": "integer", "minimum": 0, "default": 0 },
+        "sleepMinutesDC": { "type": "integer", "minimum": 0, "default": 30 },
+        "lidCloseActionAC": {
+          "enum": ["doNothing", "sleep", "hibernate", "shutDown"],
+          "default": "sleep"
+        },
+        "lidCloseActionDC": {
+          "enum": ["doNothing", "sleep", "hibernate", "shutDown"],
+          "default": "sleep"
+        },
         "showFileExtensions": { "type": "boolean", "default": true },
         "showHiddenFiles": { "type": "boolean", "default": false },
         "classicContextMenu": { "type": "boolean", "default": false },

@@ -59,6 +59,118 @@ function Remove-Self {
     }
 }
 
+<#
+    Windows 11 24H2 moved the WLAN API behind the location permission, and
+    "netsh wlan connect" calls WlanGetAvailableNetworkList underneath. Storing a
+    profile still works; connecting does not. A real run showed exactly that
+    shape -- "Profile stored: Profile DCE-Public is added on interface Wi-Fi"
+    immediately followed by "Network shell commands need location permission to
+    access WLAN information [...] WlanGetAvailableNetworkList returns error 5:
+    Access is denied", and then thirty seconds of an adapter that never
+    associated.
+
+    A freshly imaged machine has location off, because nothing turned it on:
+    the answer file skips the OOBE privacy pages. So the permission has to be
+    granted here or the connect cannot work.
+
+    It is granted for the length of the connect and then put back, so a machine
+    is not left with Location services on because it once needed to join a
+    network. Association survives the restore: the permission gates apps calling
+    the WLAN API, not the profile, and Wireless AutoConfig reconnects on its own
+    afterwards.
+
+    This is deliberately the same block as the one in Provision.ps1. The two
+    scripts share no module -- this one is copied to C:\ImageHub and runs long
+    after provisioning has finished -- and the wlansvc handling above is
+    duplicated for the same reason.
+#>
+$LocationConsentKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\location'
+$LocationPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\LocationAndSensors'
+
+function Get-LocationValue {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+    try {
+        return (Get-ItemProperty -LiteralPath $Path -Name $Name -ErrorAction Stop).$Name
+    } catch {
+        return $null
+    }
+}
+
+function Grant-LocationAccess {
+    <#
+        Returns what it changed rather than what it set, so the restore can put
+        back exactly the previous state -- including removing a value that was
+        not there to begin with. Wrapped in a hashtable because returning a bare
+        array of one element would unroll to the element itself, and a hashtable
+        reports its key count as .Count.
+    #>
+    $changed = @()
+
+    # The master toggle and the desktop-app toggle are separate: netsh is a
+    # non-packaged app, so granting only the first still leaves it denied.
+    foreach ($path in @($LocationConsentKey, (Join-Path $LocationConsentKey 'NonPackaged'))) {
+        try {
+            $before = Get-LocationValue -Path $path -Name 'Value'
+            if ($before -eq 'Allow') { continue }
+            if (-not (Test-Path -LiteralPath $path)) {
+                New-Item -Path $path -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -LiteralPath $path -Name 'Value' -Value 'Allow' `
+                -PropertyType String -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $path; Name = 'Value'; Before = $before }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't grant location access at ${path}: " +
+                $_.Exception.Message)
+        }
+    }
+
+    # Group Policy overrides the consent store outright, so a machine with this
+    # set stays denied no matter what the toggles say.
+    if ((Get-LocationValue -Path $LocationPolicyKey -Name 'DisableLocation') -eq 1) {
+        try {
+            New-ItemProperty -LiteralPath $LocationPolicyKey -Name 'DisableLocation' -Value 0 `
+                -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $changed += @{ Path = $LocationPolicyKey; Name = 'DisableLocation'; Before = 1 }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't clear the DisableLocation policy: " +
+                $_.Exception.Message)
+        }
+    }
+
+    if (@($changed).Count -gt 0) {
+        Write-Log -Message ("Granted location access to the WLAN API for the connect " +
+            "($(@($changed).Count) setting(s) changed, restored afterwards).")
+    }
+    return @{ Changes = $changed }
+}
+
+function Restore-LocationAccess {
+    param($State)
+    $changes = @($State.Changes)
+    foreach ($change in $changes) {
+        try {
+            if ($null -eq $change.Before) {
+                Remove-ItemProperty -LiteralPath $change.Path -Name $change.Name -ErrorAction Stop
+            } else {
+                Set-ItemProperty -LiteralPath $change.Path -Name $change.Name `
+                    -Value $change.Before -ErrorAction Stop
+            }
+        } catch {
+            Write-Log -Level WARN -Message ("Couldn't restore $($change.Name) under " +
+                "$($change.Path), so it is still set for the connect: $($_.Exception.Message)")
+        }
+    }
+    if ($changes.Count -gt 0) {
+        Write-Log -Message 'Location settings put back the way they were found.'
+    }
+}
+
+function Test-LocationDenied {
+    <# The two things netsh says when the permission is what stopped it. #>
+    param([string]$Text)
+    return ($Text -match 'location permission' -or $Text -match 'WlanGetAvailableNetworkList')
+}
+
 Write-Log "Deferred Wi-Fi join for '$Ssid' starting."
 
 if (-not (Test-Path -LiteralPath $Blob)) {
@@ -90,13 +202,27 @@ try {
     exit 0
 }
 
-# Wait for the driver to land. Staying registered means giving up now costs
-# nothing -- the next logon or restart tries again.
+<#
+    Wait for the driver to land. Staying registered means giving up now costs
+    nothing -- the next logon or restart tries again.
+
+    The wait logs as it goes. It used to be silent, so a log holding a single
+    "starting" line was indistinguishable from a hung script when it was in fact
+    doing exactly what it was told to.
+#>
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $found = $false
+$checks = 0
+Write-Log "Waiting up to $WaitMinutes minute(s) for a wireless interface to appear."
 while ((Get-Date) -lt $deadline) {
     $interfaces = & netsh.exe wlan show interfaces 2>&1
     if ($LASTEXITCODE -eq 0 -and ($interfaces -match 'Name\s*:')) { $found = $true; break }
+    $checks++
+    # Every fifth check, so a twenty-minute wait leaves four lines rather than forty.
+    if ($checks % 5 -eq 0) {
+        $left = [int]([Math]::Ceiling((($deadline - (Get-Date)).TotalMinutes)))
+        Write-Log "Still no wireless interface; $left minute(s) left in this attempt."
+    }
     Start-Sleep -Seconds 30
 }
 
@@ -132,23 +258,45 @@ try {
     Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
 }
 
-$connect = & netsh.exe wlan connect name="$Ssid" 2>&1
-Write-Log "Connect requested: $((($connect | Where-Object { "$_".Trim() }) -join '; '))"
-
+$location = Grant-LocationAccess
 $joined = $false
 $state = @()
-for ($attempt = 0; $attempt -lt 15; $attempt++) {
-    Start-Sleep -Seconds 2
-    $state = & netsh.exe wlan show interfaces 2>&1
-    $stateText = ($state -join ' ')
-    if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($Ssid)) {
-        $joined = $true
-        break
+$connectText = ''
+try {
+    $connect = & netsh.exe wlan connect name="$Ssid" 2>&1
+    $connectText = (($connect | Where-Object { "$_".Trim() }) -join '; ')
+    Write-Log "Connect requested: $connectText"
+
+    for ($attempt = 0; $attempt -lt 15; $attempt++) {
+        Start-Sleep -Seconds 2
+        $state = & netsh.exe wlan show interfaces 2>&1
+        $stateText = ($state -join ' ')
+        if ($stateText -match 'State\s*:\s*connected' -and $stateText -match [regex]::Escape($Ssid)) {
+            $joined = $true
+            break
+        }
     }
+} finally {
+    Restore-LocationAccess -State $location
 }
 
 if ($joined) {
     Write-Log -Level OK -Message "Connected to $Ssid."
+} elseif (Test-LocationDenied $connectText) {
+    <#
+        Granting the permission is the fix, so reaching here means it could not be
+        granted -- Group Policy owning Location services is the usual reason, and
+        that is not something that changes between one logon and the next.
+
+        Fall through to Remove-Self like every other outcome. Staying registered
+        would look like a retry and would not be one: the run after this finds the
+        profile already stored, takes the "nothing to do" exit at the top, and
+        unregisters without ever reaching the connect.
+    #>
+    Write-Log -Level WARN -Message ('Stored the profile, but Windows refused the connect: the ' +
+        'WLAN API needs location permission and it could not be granted, which usually means ' +
+        'Group Policy owns Location services on this machine. The profile is saved, so ' +
+        "Windows will join $Ssid by itself once that permission is available.")
 } else {
     # The profile is stored either way, which is the part that matters: Windows
     # uses it by itself when the machine is next off Ethernet and in range.
