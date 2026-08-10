@@ -414,6 +414,42 @@ struct SystemTab: View {
             }
 
             Section {
+                MinutesPicker(title: "Lock the screen after", minutes: $draft.system.screenLockMinutes)
+                Toggle("Manage display, sleep and lid behaviour",
+                       isOn: $draft.system.managePowerTimeouts)
+                if draft.system.managePowerTimeouts {
+                    MinutesPicker(title: "Display off (plugged in)",
+                                  minutes: $draft.system.displayOffMinutesAC)
+                    MinutesPicker(title: "Display off (on battery)",
+                                  minutes: $draft.system.displayOffMinutesDC)
+                    MinutesPicker(title: "Sleep (plugged in)",
+                                  minutes: $draft.system.sleepMinutesAC)
+                    MinutesPicker(title: "Sleep (on battery)",
+                                  minutes: $draft.system.sleepMinutesDC)
+                    Picker("Lid closed (plugged in)", selection: $draft.system.lidCloseActionAC) {
+                        ForEach(SystemSpec.LidAction.allCases) { action in
+                            Text(action.label).tag(action)
+                        }
+                    }
+                    Picker("Lid closed (on battery)", selection: $draft.system.lidCloseActionDC) {
+                        ForEach(SystemSpec.LidAction.allCases) { action in
+                            Text(action.label).tag(action)
+                        }
+                    }
+                }
+            } header: {
+                Text("Screen lock and power timeouts")
+            } footer: {
+                SectionCaption(
+                    text: "Written as machine policy, so every account gets them - including the "
+                        + "end-user account provisioning creates. Power schemes are per-user, so "
+                        + "the policy route is the only one that reaches the person who receives "
+                        + "the machine. Windows shows these as managed by your organisation, and "
+                        + "they override \"Never sleep on mains power\" above."
+                )
+            }
+
+            Section {
                 Toggle("Enable Remote Desktop", isOn: $draft.system.enableRemoteDesktop)
                 Toggle("Allow ping (ICMP echo) through the firewall", isOn: $draft.system.allowPing)
             } header: {
@@ -606,6 +642,40 @@ struct SystemTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Minute picker for the power timeouts. Zero reads as "Never" because that is
+/// exactly what Windows does with a zero timeout.
+struct MinutesPicker: View {
+    let title: String
+    @Binding var minutes: Int
+
+    private static let presets = [0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120]
+
+    /// A hand-edited template can hold a value no preset offers, and a Picker
+    /// with no matching tag renders blank and silently rewrites the value on the
+    /// next edit. Carry the odd value instead of losing it.
+    private var choices: [Int] {
+        MinutesPicker.presets.contains(minutes)
+            ? MinutesPicker.presets
+            : (MinutesPicker.presets + [minutes]).sorted()
+    }
+
+    var body: some View {
+        Picker(title, selection: $minutes) {
+            ForEach(choices, id: \.self) { value in
+                Text(MinutesPicker.label(value)).tag(value)
+            }
+        }
+    }
+
+    static func label(_ minutes: Int) -> String {
+        switch minutes {
+        case ...0: return "Never"
+        case 1: return "1 minute"
+        default: return "\(minutes) minutes"
+        }
     }
 }
 

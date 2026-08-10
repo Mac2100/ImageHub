@@ -600,6 +600,33 @@ struct SystemSpec: Codable, Equatable, Hashable {
     var disableFastStartup: Bool = false
     var disableHibernation: Bool = false
 
+    // MARK: Screen lock and power timeouts
+    //
+    // Both land as machine policy, and deliberately not through powercfg. Power
+    // schemes are per-user: a powercfg call during provisioning configures
+    // ITAdmin and leaves the account the machine is actually handed to sitting
+    // on Windows' defaults. The Power Management keys under HKLM\SOFTWARE\
+    // Policies are what Group Policy itself writes, they cover every account,
+    // and they take precedence over a user's own scheme.
+
+    /// Minutes of user inactivity before the session locks. 0 leaves Windows
+    /// alone rather than setting a limit of zero, which means "never" to Windows
+    /// and would read as a deliberate choice in the log when it was not one.
+    var screenLockMinutes: Int = 0
+
+    /// Whether the display, sleep and lid settings below are applied at all.
+    /// Off leaves the machine on Windows' defaults, which is what every template
+    /// written before these existed expects.
+    var managePowerTimeouts: Bool = false
+    /// Minutes before the display turns off. 0 means never.
+    var displayOffMinutesAC: Int = 15
+    var displayOffMinutesDC: Int = 5
+    /// Minutes before the machine sleeps. 0 means never.
+    var sleepMinutesAC: Int = 0
+    var sleepMinutesDC: Int = 30
+    var lidCloseActionAC: LidAction = .sleep
+    var lidCloseActionDC: LidAction = .sleep
+
     var showFileExtensions: Bool = true
     var showHiddenFiles: Bool = false
     var classicContextMenu: Bool = false
@@ -663,6 +690,32 @@ struct SystemSpec: Codable, Equatable, Hashable {
             case .balanced: return "381b4222-f694-41f0-9685-ff5bb260df2e"
             case .highPerformance: return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
             case .powerSaver: return "a1841308-3541-4fab-bc81-f71556f20b4a"
+            }
+        }
+    }
+
+    /// What closing the lid does. Raw values are stable strings for the template
+    /// file; `index` is what the power setting itself stores.
+    enum LidAction: String, Codable, CaseIterable, Identifiable, Hashable {
+        case doNothing, sleep, hibernate, shutDown
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .doNothing: return "Do nothing"
+            case .sleep: return "Sleep"
+            case .hibernate: return "Hibernate"
+            case .shutDown: return "Shut down"
+            }
+        }
+
+        /// The LIDACTION value Windows stores. Fixed by Windows, not by us.
+        var index: Int {
+            switch self {
+            case .doNothing: return 0
+            case .sleep: return 1
+            case .hibernate: return 2
+            case .shutDown: return 3
             }
         }
     }
@@ -744,6 +797,14 @@ struct SystemSpec: Codable, Equatable, Hashable {
         disableSleepOnAC = c.v(.disableSleepOnAC, true)
         disableFastStartup = c.v(.disableFastStartup, false)
         disableHibernation = c.v(.disableHibernation, false)
+        screenLockMinutes = c.v(.screenLockMinutes, 0)
+        managePowerTimeouts = c.v(.managePowerTimeouts, false)
+        displayOffMinutesAC = c.v(.displayOffMinutesAC, 15)
+        displayOffMinutesDC = c.v(.displayOffMinutesDC, 5)
+        sleepMinutesAC = c.v(.sleepMinutesAC, 0)
+        sleepMinutesDC = c.v(.sleepMinutesDC, 30)
+        lidCloseActionAC = c.v(.lidCloseActionAC, LidAction.sleep)
+        lidCloseActionDC = c.v(.lidCloseActionDC, LidAction.sleep)
         showFileExtensions = c.v(.showFileExtensions, true)
         showHiddenFiles = c.v(.showHiddenFiles, false)
         classicContextMenu = c.v(.classicContextMenu, false)

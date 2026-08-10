@@ -204,6 +204,9 @@ $script:StepTotal = 12 + @(Get-Setting $Config 'apps' @()).Count `
 if ([string](Get-Setting (Get-Setting $System 'activation') 'mode' 'automatic') -ne 'skip') {
     $script:StepTotal++
 }
+# Both are their own step only when asked for, so the bar counts them the same way.
+if ([int](Get-Setting $System 'screenLockMinutes' 0) -gt 0) { $script:StepTotal++ }
+if (Get-Setting $System 'managePowerTimeouts' $false) { $script:StepTotal++ }
 
 if (Get-Setting $System 'showProvisioningScreen' $true) {
     # The logo has to exist before the screen starts, so stage assets early.
@@ -949,6 +952,91 @@ Invoke-Step 'Applying power settings' {
         Set-RegistryValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' `
             -Name 'HiberbootEnabled' -Value 0
         Write-Log -Level OK -Message "Fast startup disabled."
+    }
+}
+
+<#
+    Screen lock and the display/sleep/lid timeouts, both written as machine
+    policy and deliberately not through powercfg.
+
+    Power schemes are per-user. powercfg here would configure ITAdmin -- an
+    account that is often hidden straight afterwards and never signed into again
+    -- and leave the person who actually receives the machine on Windows'
+    defaults. The Power Management keys under HKLM\SOFTWARE\Policies are what
+    Group Policy itself writes: one place, every account, and they take
+    precedence over whatever scheme a user later picks.
+
+    The same reasoning puts the lock on InactivityTimeoutSecs, which is HKLM, and
+    not on the per-user screensaver values.
+#>
+function Get-PowerSettingGuid {
+    <#
+        Asks powercfg which GUID sits behind an alias instead of hardcoding it.
+        The display and sleep GUIDs are easy to confirm; the lid one is quoted
+        more often than it is sourced, and the machine holds the authoritative
+        answer either way.
+    #>
+    param([Parameter(Mandatory)][string]$Alias)
+    foreach ($line in (& powercfg.exe /aliases 2>&1)) {
+        if ("$line".Trim() -match '^([0-9a-fA-F-]{36})\s+(\S+)$' -and $Matches[2] -eq $Alias) {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
+function Set-PowerSettingPolicy {
+    param(
+        [Parameter(Mandatory)][string]$Alias,
+        [Parameter(Mandatory)][int]$AC,
+        [Parameter(Mandatory)][int]$DC,
+        [Parameter(Mandatory)][string]$What
+    )
+    $guid = Get-PowerSettingGuid -Alias $Alias
+    if (-not $guid) {
+        Write-Log -Level WARN -Message ("powercfg does not list a $Alias setting on this " +
+            "build, so $What was left alone.")
+        return $false
+    }
+    $path = "HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\$guid"
+    Set-RegistryValue -Path $path -Name 'ACSettingIndex' -Value $AC
+    Set-RegistryValue -Path $path -Name 'DCSettingIndex' -Value $DC
+    return $true
+}
+
+$screenLockMinutes = [int](Get-Setting $System 'screenLockMinutes' 0)
+if ($screenLockMinutes -gt 0) {
+    Invoke-Step "Locking the screen after $screenLockMinutes minute(s) of inactivity" {
+        Set-RegistryValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' `
+            -Name 'InactivityTimeoutSecs' -Value ($screenLockMinutes * 60)
+        Write-Log -Level OK -Message 'Machine inactivity limit set; it covers every account.'
+    }
+}
+
+if (Get-Setting $System 'managePowerTimeouts' $false) {
+    Invoke-Step 'Applying display, sleep and lid policy' {
+        # Windows stores these timeouts in seconds; the template speaks minutes.
+        $displayAC = [int](Get-Setting $System 'displayOffMinutesAC' 15) * 60
+        $displayDC = [int](Get-Setting $System 'displayOffMinutesDC' 5) * 60
+        $sleepAC = [int](Get-Setting $System 'sleepMinutesAC' 0) * 60
+        $sleepDC = [int](Get-Setting $System 'sleepMinutesDC' 30) * 60
+        # Lid actions are an enumeration, not a duration, so they pass through.
+        $lidAC = [int](Get-Setting $System 'lidCloseActionAC' 1)
+        $lidDC = [int](Get-Setting $System 'lidCloseActionDC' 1)
+
+        $set = 0
+        if (Set-PowerSettingPolicy -Alias 'VIDEOIDLE' -AC $displayAC -DC $displayDC `
+                -What 'the display timeout') { $set++ }
+        if (Set-PowerSettingPolicy -Alias 'STANDBYIDLE' -AC $sleepAC -DC $sleepDC `
+                -What 'the sleep timeout') { $set++ }
+        if (Set-PowerSettingPolicy -Alias 'LIDACTION' -AC $lidAC -DC $lidDC `
+                -What 'the lid close action') { $set++ }
+
+        if ($set -eq 0) {
+            throw 'None of the power settings could be resolved, so nothing was applied.'
+        }
+        Write-Log -Level OK -Message ("Power policy applied for every account " +
+            "($set of 3 setting(s)).")
     }
 }
 

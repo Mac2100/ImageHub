@@ -89,6 +89,18 @@ enum PayloadBuilder {
             var disableSleepOnAC: Bool
             var disableFastStartup: Bool
             var disableHibernation: Bool
+            // Minutes on this side, seconds in the registry. Provision.ps1 does
+            // the conversion, so the config stays readable.
+            var screenLockMinutes: Int
+            var managePowerTimeouts: Bool
+            var displayOffMinutesAC: Int
+            var displayOffMinutesDC: Int
+            var sleepMinutesAC: Int
+            var sleepMinutesDC: Int
+            // Resolved to the numeric LIDACTION values here so the payload
+            // needs no lookup table of its own.
+            var lidCloseActionAC: Int
+            var lidCloseActionDC: Int
             var showFileExtensions: Bool
             var showHiddenFiles: Bool
             var classicContextMenu: Bool
@@ -365,6 +377,14 @@ enum PayloadBuilder {
                 disableSleepOnAC: system.disableSleepOnAC,
                 disableFastStartup: system.disableFastStartup,
                 disableHibernation: system.disableHibernation,
+                screenLockMinutes: system.screenLockMinutes,
+                managePowerTimeouts: system.managePowerTimeouts,
+                displayOffMinutesAC: system.displayOffMinutesAC,
+                displayOffMinutesDC: system.displayOffMinutesDC,
+                sleepMinutesAC: system.sleepMinutesAC,
+                sleepMinutesDC: system.sleepMinutesDC,
+                lidCloseActionAC: system.lidCloseActionAC.index,
+                lidCloseActionDC: system.lidCloseActionDC.index,
                 showFileExtensions: system.showFileExtensions,
                 showHiddenFiles: system.showHiddenFiles,
                 classicContextMenu: system.classicContextMenu,

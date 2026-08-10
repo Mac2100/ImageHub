@@ -200,6 +200,29 @@
         "disableSleepOnAC": { "type": "boolean", "default": true },
         "disableFastStartup": { "type": "boolean", "default": false },
         "disableHibernation": { "type": "boolean", "default": false },
+        "screenLockMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Minutes of inactivity before the session locks, written as the machine-wide InactivityTimeoutSecs policy so every account is covered. 0 leaves Windows alone."
+        },
+        "managePowerTimeouts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Applies the display, sleep and lid settings below as machine policy. Off leaves Windows' defaults in charge."
+        },
+        "displayOffMinutesAC": { "type": "integer", "minimum": 0, "default": 15 },
+        "displayOffMinutesDC": { "type": "integer", "minimum": 0, "default": 5 },
+        "sleepMinutesAC": { "type": "integer", "minimum": 0, "default": 0 },
+        "sleepMinutesDC": { "type": "integer", "minimum": 0, "default": 30 },
+        "lidCloseActionAC": {
+          "enum": ["doNothing", "sleep", "hibernate", "shutDown"],
+          "default": "sleep"
+        },
+        "lidCloseActionDC": {
+          "enum": ["doNothing", "sleep", "hibernate", "shutDown"],
+          "default": "sleep"
+        },
         "showFileExtensions": { "type": "boolean", "default": true },
         "showHiddenFiles": { "type": "boolean", "default": false },
         "classicContextMenu": { "type": "boolean", "default": false },

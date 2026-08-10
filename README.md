@@ -62,6 +62,12 @@ screen. No keystrokes in between.
   and consumer-feature policies, AppX debloat list, optional Windows features,
   Windows Update policy, BitLocker, Wi-Fi profile, wallpaper/lock screen/Start
   layout, and arbitrary registry values.
+- **Screen lock and power timeouts** — inactivity lock, display and sleep
+  timeouts on mains and battery, and what closing the lid does. All written as
+  *machine policy* rather than with `powercfg`: power schemes are per-user, so
+  configuring them during provisioning would set them for the IT admin account
+  and leave the person who receives the machine on Windows' defaults. The policy
+  keys cover every account and outrank a user's own scheme.
 - **End-user setup** — leave Windows OOBE to whoever receives the machine,
   pre-create a named local account, or have provisioning prompt the technician
   at first boot. Workgroup, Active Directory domain join, or leave the device
