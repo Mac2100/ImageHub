@@ -1,0 +1,56 @@
+<!--
+  Dark palette. Same keys as Light.xaml, in the same order, so the two stay
+  comparable at a glance and neither can drift a key the control styles need.
+  Follows the Windows 11 (Fluent) dark theme.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Surfaces -->
+  <SolidColorBrush x:Key="WindowBg" Color="#FF202020" />
+  <SolidColorBrush x:Key="ContentBg" Color="#FF272727" />
+  <SolidColorBrush x:Key="SidebarBg" Color="#FF1C1C1C" />
+  <SolidColorBrush x:Key="BarBg" Color="#FF232323" />
+  <SolidColorBrush x:Key="MenuBg" Color="#FF2C2C2C" />
+  <SolidColorBrush x:Key="CardBg" Color="#FF2D2D2D" />
+  <SolidColorBrush x:Key="SubtleBg" Color="#FF323232" />
+  <SolidColorBrush x:Key="LogBg" Color="#FF1A1A1A" />
+
+  <!-- Lines -->
+  <SolidColorBrush x:Key="CardBorder" Color="#FF3B3B3B" />
+  <SolidColorBrush x:Key="DividerBrush" Color="#FF383838" />
+  <SolidColorBrush x:Key="ControlBorder" Color="#FF4A4A4A" />
+  <SolidColorBrush x:Key="ControlBorderHover" Color="#FF5E5E5E" />
+
+  <!-- Controls -->
+  <SolidColorBrush x:Key="ControlBg" Color="#FF343434" />
+  <SolidColorBrush x:Key="ControlBgHover" Color="#FF3D3D3D" />
+  <SolidColorBrush x:Key="ControlBgPressed" Color="#FF303030" />
+  <SolidColorBrush x:Key="FieldBg" Color="#FF2B2B2B" />
+  <SolidColorBrush x:Key="HoverBg" Color="#14FFFFFF" />
+  <SolidColorBrush x:Key="PressedBg" Color="#0AFFFFFF" />
+  <SolidColorBrush x:Key="SelectedBg" Color="#FF3A3A3A" />
+  <SolidColorBrush x:Key="ThumbBrush" Color="#FF7A7A7A" />
+  <SolidColorBrush x:Key="TrackBrush" Color="#FF3A3A3A" />
+
+  <!-- Text -->
+  <SolidColorBrush x:Key="TextPrimary" Color="#FFF3F3F3" />
+  <SolidColorBrush x:Key="TextSecondary" Color="#FFB6B6B6" />
+  <SolidColorBrush x:Key="TextTertiary" Color="#FF8B8B8B" />
+  <SolidColorBrush x:Key="TextDisabled" Color="#FF6D6D6D" />
+  <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFFFF" />
+
+  <!-- Status -->
+  <SolidColorBrush x:Key="SuccessBrush" Color="#FF6CCB5F" />
+  <SolidColorBrush x:Key="WarningBrush" Color="#FFFFC83D" />
+  <SolidColorBrush x:Key="DangerBrush" Color="#FFFF99A4" />
+  <SolidColorBrush x:Key="InfoBrush" Color="#FF60CDFF" />
+
+  <!-- Accent: replaced at runtime by ThemeManager. -->
+  <SolidColorBrush x:Key="AccentBrush" Color="#FF4C86F2" />
+  <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF6094F4" />
+  <SolidColorBrush x:Key="AccentPressedBrush" Color="#FF3F72CE" />
+  <SolidColorBrush x:Key="AccentSubtleBrush" Color="#264C86F2" />
+  <SolidColorBrush x:Key="AccentSecondaryBrush" Color="#FF5CBDF5" />
+
+</ResourceDictionary>

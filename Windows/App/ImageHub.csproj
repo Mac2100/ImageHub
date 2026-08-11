@@ -1,0 +1,89 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Only for the notification-area balloon in Services/Notifier.cs. WPF and
+         WinForms share a lot of type names (Application, MessageBox, Color), so
+         implicit usings are off and that one file qualifies what it touches. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>12.0</LangVersion>
+
+    <AssemblyName>ImageHub</AssemblyName>
+    <RootNamespace>ImageHub</RootNamespace>
+    <ApplicationIcon>Assets\ImageHub.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <Product>ImageHub</Product>
+    <AssemblyTitle>ImageHub</AssemblyTitle>
+    <Description>Bootable Windows golden-image USB drives, built from reusable deployment templates.</Description>
+    <Copyright>Open source, MIT licensed.</Copyright>
+    <NeutralLanguage>en</NeutralLanguage>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- Overwritten by ResolveMarketingVersion below, which reads the macOS
+         app's AppVersion.swift so there is one version for both platforms. -->
+    <Version>0.0.0</Version>
+
+    <!-- Everything ships in one .exe: no runtime to install, and the in-app
+         updater has a single file to swap. -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Shared/payload is the canonical copy of the provisioning scripts the
+         macOS app bundles in its Resources. Here they ride inside the single
+         .exe and PayloadBuilder writes them onto the drive byte for byte, so a
+         drive built on Windows carries the same payload as one built on a Mac. -->
+    <EmbeddedResource Include="..\..\Shared\payload\*"
+                      LogicalName="payload/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- The version lives in exactly one place, Sources/ImageHub/Support/AppVersion.swift,
+       because the two apps have to agree: they check the same GitHub release and
+       compare against their own version. A warning rather than an error keeps a
+       source build working if this ever breaks; CI asserts that `ImageHub.exe
+       --version` matches that file, so a silent wrong version can't ship. -->
+  <UsingTask TaskName="ReadMarketingVersion"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <SwiftFile ParameterType="System.String" Required="true" />
+      <MarketingVersion ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        MarketingVersion = "";
+        if (System.IO.File.Exists(SwiftFile))
+        {
+            var text = System.IO.File.ReadAllText(SwiftFile);
+            var match = System.Text.RegularExpressions.Regex.Match(
+                text, "marketing\\s*=\\s*\"([^\"]+)\"");
+            if (match.Success) { MarketingVersion = match.Groups[1].Value; }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="ResolveMarketingVersion" BeforeTargets="GetAssemblyVersion;GenerateAssemblyInfo">
+    <ReadMarketingVersion SwiftFile="$(MSBuildThisFileDirectory)..\..\Sources\ImageHub\Support\AppVersion.swift">
+      <Output TaskParameter="MarketingVersion" PropertyName="_MarketingVersion" />
+    </ReadMarketingVersion>
+    <Warning Condition="'$(_MarketingVersion)' == ''"
+             Text="Couldn't read AppVersion.marketing from Sources/ImageHub/Support/AppVersion.swift; building as $(Version)." />
+    <PropertyGroup Condition="'$(_MarketingVersion)' != ''">
+      <Version>$(_MarketingVersion)</Version>
+      <InformationalVersion>$(_MarketingVersion)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+</Project>
