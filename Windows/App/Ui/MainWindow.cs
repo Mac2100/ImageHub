@@ -235,6 +235,11 @@ public sealed class MainWindow : ThemedWindow
 
         // Help
         var help = new MenuItem { Header = "_Help" };
+        // F1 is the documentation, as it is in every other Windows application. There
+        // is no compiled help file to ship, so it opens the documentation where it is
+        // actually maintained.
+        help.Items.Add(Item("ImageHub _Help", "F1", OpenDocumentation));
+        help.Items.Add(new Separator());
         help.Items.Add(Item("ImageHub on _GitHub", null,
             () => AppPaths.OpenUrl($"https://github.com/{UpdateChecker.Repo}")));
         help.Items.Add(Item("_Release Notes", null, () => AppPaths.OpenUrl(UpdateChecker.ReleasesPage)));
@@ -247,6 +252,9 @@ public sealed class MainWindow : ThemedWindow
 
         return menu;
     }
+
+    private static void OpenDocumentation() =>
+        AppPaths.OpenUrl($"https://github.com/{UpdateChecker.Repo}#readme");
 
     private static MenuItem Item(string header, string? gesture, Action action)
     {
@@ -397,6 +405,7 @@ public sealed class MainWindow : ThemedWindow
         Bind(Key.D, ModifierKeys.Control, DuplicateSelectedTemplate);
         Bind(Key.OemComma, ModifierKeys.Control, ShowOptions);
         Bind(Key.F5, ModifierKeys.None, () => _ = _state.RefreshDrivesAsync());
+        Bind(Key.F1, ModifierKeys.None, OpenDocumentation);
         for (int i = 0; i < _sections.Length; i++)
         {
             Section section = _sections[i].Section;

@@ -1,9 +1,15 @@
 # ImageHub
 
-Native macOS app for building **bootable Windows golden-image USB drives** from
-reusable deployment templates. Built for IT departments that reimage machines by
-hand and want the whole thing to be one workflow: wipe the computer, build the
-stick, boot it, walk away.
+Native **macOS and Windows** apps for building **bootable Windows golden-image USB
+drives** from reusable deployment templates. Built for IT departments that reimage
+machines by hand and want the whole thing to be one workflow: wipe the computer,
+build the stick, boot it, walk away.
+
+Both apps are in this repository, are built from the same commit, ship in the same
+release, and read and write the same template files. They have the same features
+and the same eight-stage build, each written to look like it belongs on its own
+platform. A drive built on Windows is interchangeable with one built on a Mac —
+and [CI proves it](#ci--releases) on every push rather than leaving it to trust.
 
 ![ImageHub icon](Resources/icon_1024.png)
 
@@ -35,8 +41,9 @@ screen. No keystrokes in between.
   licence) and activates on its own; provisioning installs that firmware key and
   runs activation to be sure. KMS host and MAK/retail keys are both options.
   Nobody opens Settings to clear an "Activate Windows" watermark.
-- **IT admin profile** — a local administrator account with a password kept in
-  your macOS Keychain, auto-logon for the provisioning run, optional hiding from
+- **IT admin profile** — a local administrator account with a password kept in your
+  macOS Keychain (or, on Windows, DPAPI-encrypted for your account, with Credential
+  Manager as an option), auto-logon for the provisioning run, optional hiding from
   the sign-in screen afterwards.
 - **Applications** — winget package IDs (with a built-in catalog of ~70 packages
   IT actually deploys, and none that are known not to work), bundled MSI/EXE
@@ -50,7 +57,7 @@ screen. No keystrokes in between.
   PowerPoint, Outlook, OneNote, Access, Publisher — and that is the whole setting.
   ImageHub downloads the Deployment Tool from Microsoft on the first build that
   needs it (~7 MB, cached) and generates `configuration.xml` **at build time**, so a
-  mistake surfaces on your Mac rather than on a bench. Product, channel,
+  mistake surfaces on the machine you built from rather than on a bench. Product, channel,
   architecture and language are fixed because each had one right answer; Teams and
   OneDrive are left to the app catalog and to Windows, so nothing installs twice.
 
@@ -92,18 +99,29 @@ screen. No keystrokes in between.
   erasing, and the finished media is checked for its boot files before the build
   is called done.
 - **Themes** — six accent themes and a System/Light/Dark appearance override
-  (Settings → Appearance).
+  (Settings → Appearance on macOS, Tools → Options → Appearance on Windows, where
+  "System" follows the Windows personalisation setting).
 - **One-click updates** — optional check against GitHub Releases at launch plus
-  "Check for Updates…" in the app menu; installing downloads the DMG, swaps the
-  app in place, and relaunches.
+  "Check for Updates…" in the app menu (Help menu on Windows). One release, one
+  version number, one check; each app picks the asset for its own platform, so the
+  Mac downloads the DMG and Windows downloads the `.exe`, swaps itself in place,
+  and relaunches.
 
 ## Installation
 
-### Download
+Every [release](https://github.com/Mac2100/ImageHub/releases) carries both
+platforms under one version number:
 
-Grab the latest `ImageHub-x.y.z.dmg` from
-[Releases](https://github.com/Mac2100/ImageHub/releases), open it, and drag
-**ImageHub** into **Applications**.
+| File | Platform |
+| --- | --- |
+| `ImageHub-x.y.z.dmg` | macOS 14+, Apple Silicon and Intel |
+| `ImageHub-x.y.z-win-x64.exe` | Windows 10 or 11, x64 |
+| `ImageHub-x.y.z-macos-universal.zip` | the `.app` on its own |
+| `ImageHub-x.y.z-win-x64.zip` | the `.exe` on its own, for deployment tools |
+
+### macOS
+
+Open the DMG and drag **ImageHub** into **Applications**.
 
 > **Note on Gatekeeper:** releases are ad-hoc signed (no paid Apple Developer
 > certificate), so the first launch requires right-clicking the app → **Open**, or:
@@ -111,9 +129,30 @@ Grab the latest `ImageHub-x.y.z.dmg` from
 > xattr -d com.apple.quarantine /Applications/ImageHub.app
 > ```
 
+### Windows
+
+Download the `.exe` and run it. There is nothing to install: it is a single
+self-contained file with the .NET runtime, the provisioning payload and the icons
+inside it, so it runs from a folder, a share, or a stick.
+
+Put it somewhere writable if you want in-app updates — the updater replaces the
+file it is running from, and `C:\Program Files` needs elevation for that.
+`%LOCALAPPDATA%\Programs\ImageHub\` is a good choice.
+
+> **Note on SmartScreen:** the `.exe` is unsigned (a code-signing certificate is a
+> paid, per-year, identity-verified purchase), so the first run shows "Windows
+> protected your PC" → **More info** → **Run anyway**. Nothing needs to be turned
+> off, and the warning stops once the file has a reputation.
+
+The app asks for administrator rights only when it needs them — erasing a drive,
+partitioning, mounting an ISO — and the status bar says which state you are in,
+with **Restart as Administrator** in the Tools menu when you need to change it. It
+does not demand elevation just to start, so browsing templates and reviewing an
+answer file need no prompt at all.
+
 ### Build from source
 
-Requires Xcode 15+ / Swift 5.9+ on macOS 14 or later.
+**macOS** — Xcode 15+ / Swift 5.9+ on macOS 14 or later:
 
 ```bash
 git clone https://github.com/Mac2100/ImageHub.git
@@ -123,23 +162,43 @@ cd ImageHub
 
 For development, `swift run` works directly, or open `Package.swift` in Xcode.
 
-### Nothing to install
+**Windows** — the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0),
+and nothing else (no Visual Studio, no Windows SDK):
+
+```powershell
+git clone https://github.com/Mac2100/ImageHub.git
+cd ImageHub
+dotnet publish Windows\App\ImageHub.csproj -c Release -o publish
+.\publish\ImageHub.exe
+```
+
+`dotnet run --project Windows\App` works for development. Both apps take their
+version from `AppVersion.marketing` in
+`Sources/ImageHub/Support/AppVersion.swift` — the csproj reads that Swift file at
+build time, so there is one number to bump and the two apps can never disagree
+about which release is newer than they are.
+
+### No other tools, on either platform
 
 Every current Windows 11 ISO has an `install.wim` larger than 4 GB. UEFI firmware
 is only *guaranteed* to read FAT, so Windows Setup media has to be FAT32 — which
 has a 4 GB per-file ceiling. The file therefore has to be split into
-`install.swm` parts, which Setup reads natively. ImageHub uses
-[wimlib](https://wimlib.net) for that one job, and **ships it inside the app**, so
-there is nothing to set up. The split happens automatically during a build.
+`install.swm` parts, which Setup reads natively.
 
+On **Windows** that is DISM's `/Split-Image`, which is part of the operating
+system; everything else uses the built-in storage cmdlets (`Clear-Disk`,
+`New-Partition`, `Format-Volume`, `Mount-DiskImage`). Nothing to install.
+
+On **macOS** there is no equivalent, so ImageHub uses
+[wimlib](https://wimlib.net) for that one job and **ships it inside the app**.
 Everything else — reading edition lists, formatting, copying, generating the
 answer file — uses either macOS's own tools (`diskutil`, `hdiutil`) or code in
 this repo. Notably the file copying is native rather than `rsync`: macOS still
 ships rsync 2.6.9, which lacks the progress reporting this needs.
 
-If you build from source without staging wimlib, the app falls back to finding
-Homebrew's copy (`brew install wimlib`) and Settings → Tools has a one-click
-installer. To produce the bundled binary yourself:
+If you build the Mac app from source without staging wimlib, it falls back to
+finding Homebrew's copy (`brew install wimlib`) and Settings → Tools has a
+one-click installer. To produce the bundled binary yourself:
 
 ```bash
 ./scripts/build_wimlib.sh vendor/bin     # then ./scripts/make_app.sh
@@ -150,19 +209,21 @@ invokes it as a separate process rather than linking it, so ImageHub itself stay
 MIT and this is aggregation — but the DMG does contain a GPLv3 program. Its
 licence text and pinned version ship in the app bundle, `scripts/build_wimlib.sh`
 records exactly which source it was built from, and Settings → About links to the
-licence.
+licence. The Windows `.exe` contains no wimlib and no GPL code: DISM does the split.
 
 ## How a build works
+
+Identical on both platforms — same eight stages, same log, same output:
 
 1. **Validate** the template and re-check the drive is still removable external media.
 2. **Erase** the drive and create a single FAT32 volume (MBR by default — the most
    widely bootable layout for Setup media).
 3. **Copy** the mounted ISO to it, excluding the install image.
 4. **Write the install image** — copied straight across if it's under 4 GB, split
-   into `install*.swm` with wimlib if not. A template can substitute its own
-   captured `install.wim` here.
+   into `install*.swm` if not (wimlib on macOS, DISM on Windows). A template can
+   substitute its own captured `install.wim` here.
 5. **Generate `autounattend.xml`** from the template, injecting secrets from the
-   Keychain at this moment and nowhere else.
+   Keychain (or DPAPI / Credential Manager) at this moment and nowhere else.
 6. **Write the `ImageHub\` payload** — `Provision.ps1`, a resolved `config.json`,
    bundled installers, assets, and custom scripts.
 7. **Verify** `bootmgr`, `boot/bcd`, `sources/boot.wim`, the install image, the
@@ -187,13 +248,48 @@ ImageHub supports both, per template:
   the installed image is yours. Provisioning still runs on top, so the two
   approaches compose.
 
-## Windows
+## The Windows app
 
-[`Windows/ImageHub.ps1`](Windows/ImageHub.ps1) is the Windows-side builder. It
-reads the same template JSON, generates the same `autounattend.xml`, and writes
-the same payload, using `diskpart`/`Mount-DiskImage`/`robocopy`/`DISM` instead of
-the macOS tools — so a drive built on Windows is interchangeable with one built on
-a Mac, and no extra tools are needed there (DISM splits WIMs itself).
+[`Windows/App/`](Windows/App) is a WPF app on .NET 8, published as one
+self-contained `ImageHub.exe`. It is not a port of the UI so much as the same app
+written to Windows' conventions:
+
+- **A real menu bar** — File, Edit, View, Tools, Help, with the accelerators
+  Windows users expect (<kbd>Alt</kbd> navigation, <kbd>Ctrl</kbd>+<kbd>N</kbd>,
+  <kbd>F5</kbd>, <kbd>F1</kbd>) rather than a Mac menu bar transplanted across.
+- **Tools → Options**, a six-category settings dialog with OK / Cancel / Apply —
+  not a macOS-style preferences window that saves as you type.
+- **Fluent styling** — Windows 11 metrics (4px controls, 8px cards, 32px control
+  height), accent underlines on tabs, the system accent colour honoured, a dark
+  title bar via `DwmSetWindowAttribute`, and light/dark following the Windows
+  personalisation setting.
+- **A status bar** that states plainly whether you are running elevated, and a
+  UAC shield on the actions that will prompt.
+- **Native placement** — templates and settings in `%APPDATA%`, the image library,
+  logs and caches in `%LOCALAPPDATA%`, notification-area balloons for finished
+  builds, and drives appearing the moment they are plugged in (a `WM_DEVICECHANGE`
+  hook, not a polling timer).
+
+Two behavioural differences from the Mac are worth knowing, both from Windows
+itself rather than choices made here:
+
+- **A FAT32 volume is capped at 31 GB.** Windows' own `Format-Volume` refuses
+  FAT32 above 32 GB, and Setup media has to be FAT32 (see above). On a larger
+  stick ImageHub creates a 31 GB partition and leaves the rest unallocated, which
+  is plenty for an ISO plus payload. macOS' `newfs_msdos` has no such limit and
+  uses the whole drive.
+- **Reading the edition list inside an ISO needs administrator rights**, because
+  mounting the ISO does. Importing without them still works and the image is
+  usable; its editions are listed as "Editions unread" until you refresh the entry
+  while elevated.
+
+### The PowerShell builder
+
+[`Windows/ImageHub.ps1`](Windows/ImageHub.ps1) is still here and still supported.
+It reads the same template JSON, generates the same `autounattend.xml`, and writes
+the same payload, with no .NET and no app to install — which is what you want from
+a task-sequence step, a lab bench with an execution-policy-only PowerShell, or a
+build you script:
 
 ```powershell
 # From an elevated PowerShell session, inside the checkout
@@ -205,18 +301,20 @@ Passwords are read from a `<template>.secrets.json` sidecar if present, otherwis
 prompted for — they are never stored in the template, which keeps templates safe
 to commit.
 
-**Current state:** the Windows side is a complete command-line builder, not yet a
-GUI. The template schema
-([`Shared/schema/template.schema.json`](Shared/schema/template.schema.json)) is
-the documented contract, so a native WinUI front-end is a second client over
-logic that already exists rather than a rewrite. CI only builds the macOS app.
+The app is the better choice for interactive work: it has the template editor, the
+image library, build history and the update check, and it keeps secrets in DPAPI
+rather than a sidecar file.
 
 ## Security notes
 
 - Template passwords, product keys, domain-join credentials, and Wi-Fi
-  passphrases are stored **only** in the macOS Keychain. They are never written
-  into template JSON, so templates are safe to export and commit.
-- They leave the Keychain in exactly one place: writing a drive. Windows Setup
+  passphrases are stored **only** in the operating system's own secret store: the
+  macOS Keychain, or on Windows DPAPI-encrypted per user under
+  `%LOCALAPPDATA%\ImageHub\` (Windows Credential Manager instead, if you prefer it
+  — Tools → Options → Passwords). Either way they are never written into template
+  JSON, so templates are safe to export and commit. Secrets do not travel with a
+  template: move one between machines and the app asks for the passwords again.
+- They leave the store in exactly one place: writing a drive. Windows Setup
   reads account passwords from `autounattend.xml` in **clear text** — that is how
   the format works — so **treat a finished USB drive as a credential.** The app
   says so before every build.
@@ -240,31 +338,62 @@ logic that already exists rather than a rewrite. CI only builds the macOS app.
 
 ## Repository layout
 
+The two apps mirror each other file for file, so a change on one platform has an
+obvious counterpart on the other.
+
 ```
-Sources/ImageHub/          SwiftUI app
+Sources/ImageHub/          SwiftUI app (macOS)
   Models/                  Template schema, images, drives, build jobs
   Services/                Disk, ISO, WIM, copying, answer file, payload, updates
   ViewModels/AppState      App-wide state and the build queue
   Views/                   UI, theme system, settings
-Shared/payload/            Provision.ps1 + Splash.ps1 — copied onto every drive
+Windows/App/               WPF app (.NET 8) — same layout, same file names
+  Models/ Services/        The same schema and the same services, in C#
+  ViewModels/AppState.cs   The same app-wide state
+  Ui/                      Windows UI: menu bar, Options dialog, Fluent theme
+  Themes/                  Light, Dark, and the control styles
+Shared/payload/            Provision.ps1, Stage.cmd, Launch.cmd, Splash.ps1 —
+                           the one copy, written onto every drive by both apps
 Shared/schema/             JSON Schema for templates and the payload config
-Windows/ImageHub.ps1       Windows-side builder over the same schema
-scripts/make_app.sh        Universal build → .app, .zip, .dmg
+Windows/ImageHub.ps1       Scriptable Windows builder over the same schema
+scripts/make_app.sh        Universal macOS build → .app, .zip, .dmg
 scripts/build_wimlib.sh    Builds the bundled wimlib-imagex for this arch
-scripts/make_icon.swift    Redraws the app icon from the in-app SF Symbol
+scripts/make_icon.swift    Redraws the macOS icon from the in-app SF Symbol
+scripts/make_win_icon.py   Draws Windows/App/Assets/ImageHub.ico from the same shape
+scripts/check_catalog_parity.py  Keeps the three copies of the app catalog in step
+scripts/verify_generated.py      Asserts what Windows Setup requires of the output
+scripts/compare_generated.py     Compares the two apps' output, file by file
 ```
 
 ## CI / Releases
 
-Every push and pull request builds the universal app and uploads both a DMG and a
-zipped `.app` as artifacts, and parses the PowerShell payload to catch syntax
-errors early. Pushing a tag like `v1.2.0` additionally creates a GitHub Release
-with both files attached — which is what the in-app update checker looks at.
+Every push and pull request builds **both** apps and checks they still agree:
+
+| Job | What it does |
+| --- | --- |
+| Repository checks | Parses every PowerShell script, checks the payload is ASCII with a BOM (Windows PowerShell 5.1 decodes a BOM-less file as ANSI), and checks the three copies of the app catalog list the same package IDs. On Linux, so a typo fails in a minute. |
+| Build wimlib | Builds the bundled `wimlib-imagex`. Allowed to fail for Intel: the app falls back to Homebrew. |
+| Build macOS app | The universal `.app`, a `.dmg` and a `.zip`. |
+| Build Windows app | `ImageHub-<version>-win-x64.exe` and a `.zip`, and asserts the `.exe` reports the version in `AppVersion.swift` and really does carry the payload inside it. |
+| Same media from both apps | Both apps generate `autounattend.xml`, `configuration.xml` and `config.json` from the same template, and the two sets are compared. |
+| Publish release | Refuses to publish unless both a DMG and a `win-x64.exe` are present. |
+
+The parity job is the one that matters. A release ships two programs that have to
+produce interchangeable media, and "we ported it carefully" is not evidence. So
+each app is asked to emit its generated files (`--emit-answer-file`,
+`--emit-office-config`, `--emit-payload-config`), each platform checks its own
+output against what Windows Setup actually requires — the three passes, the
+schema's element order, the 259- and 1024-character limits on command strings, a
+silent Office install — and then the two sets are compared as parsed trees rather
+than as text, so reindentation is ignored and a changed value is not. If the two
+generators drift, this fails and names the file and the element.
 
 To cut a release: bump `AppVersion.marketing` in
-`Sources/ImageHub/Support/AppVersion.swift`, then tag the commit `v<version>` and
-push the tag. Or run the workflow manually with **Publish a GitHub Release**
-ticked.
+`Sources/ImageHub/Support/AppVersion.swift` — the one place either app reads its
+version from — then tag the commit `v<version>` and push the tag. Or run the
+workflow manually with **Publish a GitHub Release** ticked. The release carries
+both platforms' files, which is what the in-app update check on each platform
+looks at.
 
 ## License
 
