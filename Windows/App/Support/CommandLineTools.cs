@@ -104,9 +104,25 @@ public static class CommandLineTools
         Passwords are never included — these modes read no secrets from the store.
         """;
 
+    /// <summary>
+    /// The built-in starter's Id is a fresh Guid every time it is constructed, which is
+    /// right for the app and wrong for a fixture: CI generates from this template on
+    /// both platforms and compares the results, and a random templateID in config.json
+    /// is a difference on every run. Pinning it keeps that field genuinely compared —
+    /// including that both apps write a GUID the same way — rather than excluded from
+    /// the comparison. Must match CommandLineTools.fixtureTemplateID on the macOS side.
+    /// A template loaded from a file needs no such help: its id travels with the JSON.
+    /// </summary>
+    public const string FixtureTemplateId = "0F1E2D3C-4B5A-4697-8899-AABBCCDDEEFF";
+
     private static DeploymentTemplate LoadTemplate(string? path)
     {
-        if (path is null) { return DeploymentTemplate.StandardWorkstation(); }
+        if (path is null)
+        {
+            DeploymentTemplate starter = DeploymentTemplate.StandardWorkstation();
+            starter.Id = Guid.Parse(FixtureTemplateId);
+            return starter;
+        }
         try
         {
             DeploymentTemplate? template = Json.Deserialize<DeploymentTemplate>(File.ReadAllText(path));
