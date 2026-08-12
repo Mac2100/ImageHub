@@ -87,6 +87,11 @@ jobs:
       - name: Check the XAML trigger targets resolve
         run: python3 scripts/check_xaml_targets.py
 
+      # One missing using produces a dozen CS0246s, and finding them otherwise costs a
+      # .NET install and a compile on a Windows runner.
+      - name: Check the C# usings cover the types used
+        run: python3 scripts/check_csharp_usings.py
+
   # wimlib-imagex is bundled so splitting an oversized install.wim needs no Homebrew on
   # the Mac that builds drives. Windows needs no equivalent: DISM does the split.
   #

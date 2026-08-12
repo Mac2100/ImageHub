@@ -40,6 +40,13 @@
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- WFAC010 tells us to take the DPI settings out of app.manifest and set
+         ApplicationHighDpiMode instead. That is right for a WinForms app and wrong
+         here: this is WPF, which reads its DPI awareness from the manifest before any
+         managed code runs, and ApplicationHighDpiMode only feeds WinForms'
+         SetHighDpiMode. WinForms is referenced solely for the notification-area icon,
+         so the analyser is advising about a framework this app does not draw with. -->
+    <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <DebugType>none</DebugType>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>

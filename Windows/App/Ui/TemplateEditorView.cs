@@ -1222,7 +1222,9 @@ public sealed class TemplateEditorView : UserControl
         _ => $"{minutes} minutes",
     };
 
-    private UIElement BloatwareEditor()
+    // Border rather than UIElement: When() has to set Visibility on it, which is a
+    // FrameworkElement member.
+    private Border BloatwareEditor()
     {
         var entry = string.Empty;
         Grid field = Ui.Field(() => entry, text => entry = text, "Add an AppX package name", 260);
