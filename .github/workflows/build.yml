@@ -76,6 +76,12 @@ jobs:
       - name: Check the app catalogs agree
         run: python3 scripts/check_catalog_parity.py
 
+      # A malformed .csproj fails at project load, so the Windows job reports that one
+      # XML complaint and compiles nothing. Catching it here costs seconds and surfaces
+      # every such mistake at once.
+      - name: Check the XML is well-formed
+        run: python3 scripts/check_xml.py
+
   # wimlib-imagex is bundled so splitting an oversized install.wim needs no Homebrew on
   # the Mac that builds drives. Windows needs no equivalent: DISM does the split.
   #

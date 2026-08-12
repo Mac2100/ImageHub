@@ -16,9 +16,9 @@
     <RootNamespace>ImageHub</RootNamespace>
     <ApplicationIcon>Assets\ImageHub.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- App.xaml.cs supplies Main, so the --emit-* modes CI depends on run without
-         WPF ever being initialised. The generated entry point still exists; this is
-         what tells the compiler which one to use. -->
+    <!-- App.xaml.cs supplies Main, so the command-line emit modes CI depends on run
+         without WPF ever being initialised. The generated entry point still exists;
+         this is what tells the compiler which one to use. -->
     <StartupObject>ImageHub.Program</StartupObject>
 
     <Product>ImageHub</Product>
@@ -57,8 +57,8 @@
   <!-- The version lives in exactly one place, Sources/ImageHub/Support/AppVersion.swift,
        because the two apps have to agree: they check the same GitHub release and
        compare against their own version. A warning rather than an error keeps a
-       source build working if this ever breaks; CI asserts that `ImageHub.exe
-       --version` matches that file, so a silent wrong version can't ship. -->
+       source build working if this ever breaks; CI asserts that the version the
+       built exe reports matches that file, so a silent wrong version can't ship. -->
   <UsingTask TaskName="ReadMarketingVersion"
              TaskFactory="RoslynCodeTaskFactory"
              AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
