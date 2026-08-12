@@ -16,6 +16,10 @@
     <RootNamespace>ImageHub</RootNamespace>
     <ApplicationIcon>Assets\ImageHub.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- App.xaml.cs supplies Main, so the --emit-* modes CI depends on run without
+         WPF ever being initialised. The generated entry point still exists; this is
+         what tells the compiler which one to use. -->
+    <StartupObject>ImageHub.Program</StartupObject>
 
     <Product>ImageHub</Product>
     <AssemblyTitle>ImageHub</AssemblyTitle>
@@ -29,7 +33,9 @@
     <Version>0.0.0</Version>
 
     <!-- Everything ships in one .exe: no runtime to install, and the in-app
-         updater has a single file to swap. -->
+         updater has a single file to swap. The RID is set here rather than only on
+         the publish command line so that a plain `dotnet build` works too. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

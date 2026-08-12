@@ -8,20 +8,32 @@ using ImageHub.Views;
 
 namespace ImageHub;
 
+/// <summary>
+/// The entry point, written by hand rather than generated from App.xaml.
+///
+/// The command-line modes have to run before WPF is initialised at all. They are how
+/// CI checks the generated answer file and payload — and compares them against the
+/// macOS app's — so they must work on a machine with no interactive desktop, and must
+/// not depend on an Application ever being constructed.
+/// </summary>
+public static class Program
+{
+    [STAThread]
+    public static int Main(string[] args)
+    {
+        int? exitCode = CommandLineTools.Run(args);
+        if (exitCode is int code) { return code; }
+
+        var app = new App();
+        app.InitializeComponent();
+        return app.Run();
+    }
+}
+
 public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        // The command-line modes must run before any window exists: they are how CI
-        // checks the generated answer file and payload, and they have to be able to
-        // print and exit on a machine with no display session.
-        int? exitCode = CommandLineTools.Run(e.Args);
-        if (exitCode is int code)
-        {
-            Environment.Exit(code);
-            return;
-        }
-
         base.OnStartup(e);
 
         // A blind crash in a tool that erases disks is unacceptable; say what happened
