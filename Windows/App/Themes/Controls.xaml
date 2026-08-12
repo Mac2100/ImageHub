@@ -732,7 +732,7 @@
                     StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                     Data="M 0,0 L 5,5 L 10,0" RenderTransformOrigin="0.5,0.5">
                 <Path.RenderTransform>
-                  <RotateTransform x:Name="ChevronRotate" Angle="0" />
+                  <RotateTransform Angle="0" />
                 </Path.RenderTransform>
               </Path>
             </Grid>
@@ -741,8 +741,16 @@
             <Trigger Property="IsMouseOver" Value="True">
               <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBg}" />
             </Trigger>
+            <!-- The whole transform is replaced rather than its Angle animated in
+                 place: a Setter's TargetName resolves names in the template's tree,
+                 and a RotateTransform is a Freezable rather than an element in it, so
+                 naming the transform and setting Angle does not compile (MC4111). -->
             <Trigger Property="IsChecked" Value="True">
-              <Setter TargetName="ChevronRotate" Property="Angle" Value="180" />
+              <Setter TargetName="Chevron" Property="RenderTransform">
+                <Setter.Value>
+                  <RotateTransform Angle="180" />
+                </Setter.Value>
+              </Setter>
             </Trigger>
           </ControlTemplate.Triggers>
         </ControlTemplate>
