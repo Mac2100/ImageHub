@@ -1,0 +1,18 @@
+<Application x:Class="ImageHub.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnMainWindowClose">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!--
+          Light is merged here so the control styles have colours to resolve at
+          parse time; ThemeManager replaces this entry with Dark.xaml when the
+          appearance calls for it, on a running window.
+        -->
+        <ResourceDictionary Source="Themes/Light.xaml" />
+        <ResourceDictionary Source="Themes/Controls.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>
