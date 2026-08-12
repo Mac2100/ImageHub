@@ -311,14 +311,14 @@ function New-AnswerFile {
         }
     }
 
+    # LabConfig only, and only in windowsPE: this writes into WinPE's own registry,
+    # which is where Setup reads the hardware checks from. BypassNRO belongs to the
+    # installed system's hive, so it is applied in specialize instead.
     $bypassCommands = @()
     if (Get-Setting $system 'bypassWin11Requirements' $false) {
         foreach ($name in @('BypassTPMCheck', 'BypassSecureBootCheck', 'BypassRAMCheck', 'BypassCPUCheck', 'BypassStorageCheck')) {
             $bypassCommands += "cmd /c reg add HKLM\SYSTEM\Setup\LabConfig /v $name /t REG_DWORD /d 1 /f"
         }
-    }
-    if (Get-Setting $system 'bypassNetworkRequirement' $true) {
-        $bypassCommands += 'cmd /c reg add HKLM\SYSTEM\Setup\OOBE /v BypassNRO /t REG_DWORD /d 1 /f'
     }
     $bypassBlock = ''
     if ($bypassCommands.Count -gt 0) {
@@ -330,12 +330,24 @@ function New-AnswerFile {
     }
 
     # --- specialize -------------------------------------------------------
-    $stageCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' +
-        "`$src = Get-PSDrive -PSProvider FileSystem | ForEach-Object { Join-Path `$_.Root 'ImageHub' } | " +
-        "Where-Object { Test-Path (Join-Path `$_ 'Provision.ps1') } | Select-Object -First 1; " +
-        "if (`$src) { Copy-Item -LiteralPath `$src -Destination 'C:\ImageHub' -Recurse -Force }" + '"'
+    # Copies <media>\ImageHub to C:\ImageHub so provisioning survives the drive
+    # being unplugged. RunSynchronousCommand/Path is capped at 259 characters:
+    # the inline PowerShell this used to be came to 323, and an over-length value
+    # invalidates the *entire* unattend file -- reported as "Value is invalid"
+    # (0x80220005) only after the image has been applied, leaving the machine
+    # looping on "The computer restarted unexpectedly". The drive letter still is
+    # not knowable at build time, so the scan lives in Stage.cmd on the media and
+    # this is just long enough to find and call it. Same command the app emits.
+    $stageCommand = 'cmd /c for %d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do ' +
+        '@if exist %d:\ImageHub\Stage.cmd call %d:\ImageHub\Stage.cmd'
 
     $specializeCommands = @($stageCommand)
+    if (Get-Setting $system 'bypassNetworkRequirement' $true) {
+        # Specialize, not windowsPE: OOBE reads this from the installed system's
+        # registry, and during windowsPE HKLM is the boot image's RAM disk, so the
+        # value is thrown away with it.
+        $specializeCommands += 'cmd /c reg add HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE /v BypassNRO /t REG_DWORD /d 1 /f'
+    }
     if (Get-Setting $system 'enableRemoteDesktop' $false) {
         $specializeCommands += 'cmd /c reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f'
     }
@@ -412,10 +424,16 @@ function New-AnswerFile {
 "@
     }
 
-    $launcher = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' +
-        "`$p = 'C:\ImageHub\Provision.ps1'; if (-not (Test-Path `$p)) { " +
-        "`$p = Get-PSDrive -PSProvider FileSystem | ForEach-Object { Join-Path `$_.Root 'ImageHub\Provision.ps1' } | " +
-        "Where-Object { Test-Path `$_ } | Select-Object -First 1 }; if (`$p) { & `$p }" + '"'
+    # Launch.cmd rather than inline PowerShell, for the same reason as Stage.cmd:
+    # the one-liner this replaces came to 302 characters, and length limits on the
+    # answer file's command strings are not worth gambling on. Launch.cmd also
+    # prefers the staged copy on C:, falls back to searching the drives, logs every
+    # decision, and re-launches provisioning through an elevated scheduled task --
+    # none of which fits in a command string. Stage.cmd puts it on C:\ImageHub and
+    # registers it under RunOnce as a second way in; its .launched marker makes the
+    # duplicate call a no-op. Same command the app emits.
+    $launcher = 'cmd /c for %d in (C D E F G H I J K L M N O P Q R S T U V W X Y Z) do ' +
+        '@if exist %d:\ImageHub\Launch.cmd call %d:\ImageHub\Launch.cmd'
 
     $firstLogonBlock = @"
 
@@ -454,12 +472,14 @@ $installFrom
           <InstallTo><DiskID>$(Get-Setting $disk 'diskNumber' 0)</DiskID><PartitionID>$osPartition</PartitionID></InstallTo>
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
-      </ImageInstall>
+      </ImageInstall>$bypassBlock
+      <!-- RunSynchronous before UserData: a component's children have to be in the
+           schema's order, which is alphabetical. -->
       <UserData>$productKeyBlock
         <AcceptEula>$(([string](Get-Setting $windows 'acceptEULA' $true)).ToLower())</AcceptEula>
         <FullName>$(ConvertTo-XmlText (Get-Setting $admin 'displayName'))</FullName>
         <Organization>ImageHub</Organization>
-      </UserData>$bypassBlock
+      </UserData>
     </component>
 </settings>
 

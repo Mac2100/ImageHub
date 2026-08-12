@@ -75,14 +75,25 @@ gap is far more useful to a technician than one that died on step three.
 
 ## Editing these scripts
 
-`Shared/payload/` is the canonical copy, shared by both builders:
+`Shared/payload/` is the canonical copy, shared by all three builders:
 
 - the macOS app bundles it into `ImageHub.app/Contents/Resources/payload`
   (see `scripts/make_app.sh`);
+- the Windows app embeds it as resources inside the single `ImageHub.exe`
+  (see the `EmbeddedResource` item in `Windows/App/ImageHub.csproj`) and writes it
+  back out byte for byte;
 - `Windows/ImageHub.ps1` copies it straight out of the checkout.
 
-To iterate without rebuilding the Mac app, point **Settings → Tools →
-Provisioning scripts** at your checkout's `Shared/payload`.
+To iterate without rebuilding, point **Settings → Tools → Provisioning scripts**
+(macOS) or **Tools → Options → Advanced** (Windows) at your checkout's
+`Shared/payload`.
 
 CI parses every `.ps1` here on each push, so a syntax error fails the build
-rather than a technician's machine at 2am.
+rather than a technician's machine at 2am. It also checks each file is plain ASCII
+with a UTF-8 BOM: Windows PowerShell 5.1, which is what actually runs
+`Provision.ps1` on a target machine, decodes a BOM-less file as Windows-1252, and
+an em dash then becomes three characters ending in a curly quote — which
+PowerShell treats as a string delimiter, producing a "Missing closing '}'" on a
+script that parses perfectly under PowerShell 7. And a separate job checks the
+Windows `.exe` still carries every file listed here, since a missing one would
+only show up on a drive with no `Provision.ps1` on it.

@@ -5,3 +5,7 @@ vendor/
 *.xcodeproj
 .swiftpm/
 xcuserdata/
+
+# Windows app build output
+Windows/App/bin/
+Windows/App/obj/

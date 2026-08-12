@@ -16,15 +16,90 @@ on:
 permissions:
   contents: write
 
+# Both apps are built from every push, and a release carries both. They read the same
+# template format, generate the same media and check the same GitHub release for
+# updates, so they have to be built and verified together — a change that only makes
+# sense on one platform should fail here rather than at a technician's bench.
 jobs:
-  # wimlib-imagex is bundled so splitting an oversized install.wim needs no
-  # Homebrew on the Mac that builds drives.
+  # Everything that needs neither a Mac nor a Windows machine, first, so a typo in a
+  # provisioning script or a drifted app catalog fails in a minute rather than twenty.
+  checks:
+    name: Repository checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Check the provisioning scripts are ASCII with a BOM
+        run: |
+          set -euo pipefail
+
+          # Windows PowerShell 5.1 -- which is what actually runs Provision.ps1 on a
+          # target machine -- decodes a BOM-less file as Windows-1252, not UTF-8. An em
+          # dash (E2 80 94) then becomes three CP1252 characters, the last of which is a
+          # curly closing quote, and PowerShell treats curly quotes as string
+          # delimiters. That opened a phantom string, swallowed the braces, and produced
+          # "Missing closing '}'" on a script that parses perfectly under PowerShell 7.
+          # Requiring a BOM *and* plain ASCII closes both halves of that trap.
+          fail=0
+          for f in Shared/payload/*.ps1 Windows/*.ps1; do
+            if [ "$(head -c 3 "$f" | od -An -tx1 | tr -d ' \n')" != "efbbbf" ]; then
+              echo "::error file=$f::missing UTF-8 BOM; Windows PowerShell 5.1 will decode it as ANSI"
+              fail=1
+            fi
+            # tail -c +4 skips the BOM itself, which is of course non-ASCII.
+            if tail -c +4 "$f" | LC_ALL=C grep -qn '[^ -~'"$(printf '\t')"']'; then
+              echo "::error file=$f::contains non-ASCII characters"
+              tail -c +4 "$f" | LC_ALL=C grep -n '[^ -~'"$(printf '\t')"']' | head -5
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          echo "all payload scripts are ASCII with a UTF-8 BOM"
+
+      - name: Parse the provisioning scripts
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Filter *.ps1 -Path Shared, Windows) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $f.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              Write-Host "::error file=$($f.FullName)::$($errors[0].Message)"
+              $bad = 1
+            } else { Write-Host "ok: $($f.Name)" }
+          }
+          exit $bad
+
+      - name: Check the app catalogs agree
+        run: python3 scripts/check_catalog_parity.py
+
+      # A malformed .csproj fails at project load, so the Windows job reports that one
+      # XML complaint and compiles nothing. Catching it here costs seconds and surfaces
+      # every such mistake at once.
+      - name: Check the XML is well-formed
+        run: python3 scripts/check_xml.py
+
+      # The XAML markup compiler needs Windows and stops at the first bad trigger
+      # target, so each one otherwise costs a full Windows run to find.
+      - name: Check the XAML trigger targets resolve
+        run: python3 scripts/check_xaml_targets.py
+
+      # One missing using produces a dozen CS0246s, and finding them otherwise costs a
+      # .NET install and a compile on a Windows runner.
+      - name: Check the C# usings cover the types used
+        run: python3 scripts/check_csharp_usings.py
+
+  # wimlib-imagex is bundled so splitting an oversized install.wim needs no Homebrew on
+  # the Mac that builds drives. Windows needs no equivalent: DISM does the split.
   #
-  # One job on one runner, deliberately. The obvious shape — a matrix with an
-  # Intel runner for x86_64 — does not work any more: macos-13 sits queued
-  # indefinitely, `timeout-minutes` only starts counting once a job gets a
-  # runner, and the app build waits behind it. So arm64 is built natively and
-  # x86_64 is cross-compiled here, with cross-compilation allowed to fail.
+  # One job on one runner, deliberately. The obvious shape — a matrix with an Intel
+  # runner for x86_64 — does not work any more: macos-13 sits queued indefinitely,
+  # `timeout-minutes` only starts counting once a job gets a runner, and the app build
+  # waits behind it. So arm64 is built natively and x86_64 is cross-compiled here, with
+  # cross-compilation allowed to fail.
   wimlib:
     name: Build wimlib
     runs-on: macos-14
@@ -55,12 +130,13 @@ jobs:
           path: ${{ runner.temp }}/wimlib/
           if-no-files-found: error
 
-  build:
+  macos:
     name: Build macOS app + DMG
     runs-on: macos-14
     needs: [wimlib]
-    # A wimlib failure must not block the app: it falls back to finding
-    # Homebrew's copy at runtime, so the release still ships.
+    timeout-minutes: 40
+    # A wimlib failure must not block the app: it falls back to finding Homebrew's copy
+    # at runtime, so the release still ships.
     if: always()
     steps:
       - name: Check out
@@ -104,65 +180,15 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: Check the provisioning scripts
-        run: |
-          set -euo pipefail
-
-          # Windows PowerShell 5.1 -- which is what actually runs Provision.ps1 on
-          # a target machine -- decodes a BOM-less file as Windows-1252, not UTF-8.
-          # An em dash (E2 80 94) then becomes three CP1252 characters, the last of
-          # which is a curly closing quote, and PowerShell treats curly quotes as
-          # string delimiters. That opened a phantom string, swallowed the braces,
-          # and produced "Missing closing '}'" on a script that parses perfectly
-          # under PowerShell 7. Requiring a BOM *and* plain ASCII closes both
-          # halves of that trap. This check needs no PowerShell, so it always runs.
-          fail=0
-          for f in Shared/payload/*.ps1 Windows/*.ps1; do
-            if [ "$(head -c 3 "$f" | od -An -tx1 | tr -d ' \n')" != "efbbbf" ]; then
-              echo "::error file=$f::missing UTF-8 BOM; Windows PowerShell 5.1 will decode it as ANSI"
-              fail=1
-            fi
-            # tail -c +4 skips the BOM itself, which is of course non-ASCII.
-            if tail -c +4 "$f" | LC_ALL=C grep -qn '[^ -~'"$(printf '\t')"']'; then
-              echo "::error file=$f::contains non-ASCII characters"
-              tail -c +4 "$f" | LC_ALL=C grep -n '[^ -~'"$(printf '\t')"']' | head -5
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ] || exit 1
-          echo "all payload scripts are ASCII with a UTF-8 BOM"
-
-      - name: Parse the provisioning scripts
-        run: |
-          set -euo pipefail
-          # The old version of this step was wrapped in `if command -v pwsh`, and
-          # pwsh is not on the macOS runners -- so it silently skipped on every
-          # build while a syntax error shipped. Install it and fail loudly instead.
-          if ! command -v pwsh >/dev/null 2>&1; then
-            brew install --quiet powershell/tap/powershell || brew install --quiet --cask powershell
-          fi
-          pwsh -NoProfile -Command '
-            $bad = 0
-            foreach ($f in Get-ChildItem -Recurse -Filter *.ps1 -Path Shared, Windows) {
-              $errors = $null
-              [System.Management.Automation.Language.Parser]::ParseFile(
-                $f.FullName, [ref]$null, [ref]$errors) | Out-Null
-              if ($errors) {
-                Write-Host "::error file=$($f.FullName)::$($errors[0].Message)"
-                $bad = 1
-              } else { Write-Host "ok: $($f.Name)" }
-            }
-            exit $bad'
-
       - name: Build app, zip, and DMG
         run: ./scripts/make_app.sh
 
-      # make_app.sh redraws Resources/icon_1024.png from the SF Symbol the app
-      # itself displays. That needs macOS, so it can only happen here — and the
-      # README renders that same file straight out of the repo. Push it back when
-      # it changes, otherwise the picture in the README is whatever was committed
-      # by hand the last time somebody guessed at the shape. The render is
-      # deterministic, so this settles after one commit instead of looping.
+      # make_app.sh redraws Resources/icon_1024.png from the SF Symbol the app itself
+      # displays. That needs macOS, so it can only happen here — and the README renders
+      # that same file straight out of the repo. Push it back when it changes, otherwise
+      # the picture in the README is whatever was committed by hand the last time
+      # somebody guessed at the shape. The render is deterministic, so this settles after
+      # one commit instead of looping.
       - name: Commit the regenerated icon
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         # Never fail a release over the README's picture.
@@ -179,227 +205,19 @@ jobs:
           git commit -m "Regenerate the app icon from the in-app symbol"
           git push origin HEAD:main
 
-      - name: Verify the generated answer file and payload config
+      - name: Emit the generated artifacts
         run: |
           set -euo pipefail
+          mkdir -p generated
           BIN="dist/ImageHub.app/Contents/MacOS/ImageHub"
+          "$BIN" --emit-answer-file   > generated/autounattend.xml
+          "$BIN" --emit-office-config > generated/office.xml
+          "$BIN" --emit-payload-config > generated/config.json
+          wc -c generated/*
 
-          # autounattend.xml is the artifact with the least margin for error —
-          # a malformed one fails on a technician's bench, not here.
-          "$BIN" --emit-answer-file > /tmp/autounattend.xml
-          xmllint --noout /tmp/autounattend.xml
-          echo "answer file is well-formed ($(wc -c < /tmp/autounattend.xml) bytes)"
-
-          # Every pass Setup reads must be present, or the drive boots and then
-          # sits waiting for a human.
-          for pass in windowsPE specialize oobeSystem; do
-            grep -q "pass=\"${pass}\"" /tmp/autounattend.xml \
-              || { echo "::error::answer file is missing the ${pass} pass"; exit 1; }
-          done
-          # Provisioning is launched via Launch.cmd now, not by naming
-          # Provision.ps1 in the answer file — the inlined PowerShell was too long
-          # for the command string. The helper checks below cover that chain.
-
-          # Element order inside a component is part of the unattend schema, and
-          # Setup rejects the entire answer file when it's wrong — it does not
-          # skip the offending element. xmllint cannot see this; a well-formed
-          # file shipped for weeks with RunSynchronous after UserData, which made
-          # every windowsPE pass invalid. Check the sequences we actually emit.
-          python3 - <<'PY'
-          import sys, xml.etree.ElementTree as ET
-
-          NS = {'u': 'urn:schemas-microsoft-com:unattend'}
-          # Schema order for the components we write, in the order Setup expects.
-          ORDER = {
-              'Microsoft-Windows-Setup': [
-                  'ComplianceCheck', 'Diagnostics', 'DiskConfiguration',
-                  'DynamicUpdate', 'EnableFirewall', 'EnableNetwork',
-                  'ImageInstall', 'LogPath', 'Multivariant', 'Restart',
-                  'RunAsynchronous', 'RunSynchronous', 'UpgradeData',
-                  'UserData', 'UseConfigurationSet',
-                  'WindowsDeploymentServices',
-              ],
-              # Only this component is checked. International-Core-WinPE is
-              # deliberately left out: its canonical form puts SetupUILanguage
-              # first rather than alphabetically, so asserting an order here would
-              # risk failing CI over something unverified.
-          }
-
-          tree = ET.parse('/tmp/autounattend.xml')
-          failures = []
-          for settings in tree.getroot().findall('u:settings', NS):
-              which = settings.get('pass')
-              for component in settings.findall('u:component', NS):
-                  name = component.get('name')
-                  expected = ORDER.get(name)
-                  if not expected:
-                      continue
-                  seen = [c.tag.split('}')[-1] for c in component]
-                  ranks, unknown = [], []
-                  for tag in seen:
-                      if tag in expected:
-                          ranks.append((expected.index(tag), tag))
-                      else:
-                          unknown.append(tag)
-                  if unknown:
-                      failures.append(
-                          f"{which}/{name}: element(s) not in the known schema "
-                          f"order list: {unknown} — extend the list in build.yml")
-                  for (a, ta), (b, tb) in zip(ranks, ranks[1:]):
-                      if a > b:
-                          failures.append(
-                              f"{which}/{name}: <{ta}> must come after <{tb}>; "
-                              f"Setup will reject this answer file")
-
-          for line in failures:
-              print(f"::error::{line}")
-          if failures:
-              sys.exit(1)
-          print("answer file element order is valid for every checked component")
-          PY
-
-          # RunSynchronousCommand/Path is capped at 259 characters. Exceeding it
-          # makes Windows reject the WHOLE unattend file -- and it does so at
-          # oobeSystem, after the image is applied, so the machine ends up in a
-          # "computer restarted unexpectedly" loop rather than failing early.
-          # An inline PowerShell one-liner hit 324 characters and shipped.
-          python3 - <<'PY2'
-          import sys, xml.etree.ElementTree as ET
-          NS = {'u': 'urn:schemas-microsoft-com:unattend'}
-          # 259 is the documented ceiling for RunSynchronousCommand/Path. Whether
-          # FirstLogonCommands/CommandLine shares it is not something I could
-          # confirm, so it gets a looser bound -- enough to catch an inlined
-          # script without failing a release over a guess. Both are kept short in
-          # practice by delegating to Stage.cmd / Launch.cmd.
-          LIMITS = {'Path': 259, 'CommandLine': 1024}
-          bad = []
-          for node in ET.parse('/tmp/autounattend.xml').getroot().iter():
-              tag = node.tag.split('}')[-1]
-              limit = LIMITS.get(tag)
-              if limit and (node.text or ''):
-                  n = len(node.text.strip())
-                  if n > limit:
-                      bad.append(f"<{tag}> is {n} chars (limit {limit}): "
-                                 f"{node.text.strip()[:80]}...")
-          for line in bad:
-              print(f"::error::{line}")
-          if bad:
-              sys.exit(1)
-          print("all command strings are within their length limits")
-          PY2
-
-          # Stage.cmd does the payload staging the answer file used to inline.
-          for helper in Stage Launch; do
-            grep -q "${helper}.cmd" /tmp/autounattend.xml \
-              || { echo "::error::answer file never calls ${helper}.cmd"; exit 1; }
-            test -f "Shared/payload/${helper}.cmd" \
-              || { echo "::error::Shared/payload/${helper}.cmd is missing"; exit 1; }
-          done
-
-          # Provision.ps1 schedules JoinWifi.ps1 by path when a machine has no
-          # wireless interface yet. A missing file would only surface on a
-          # technician's bench, and only on the machines that need it most.
-          test -f "Shared/payload/JoinWifi.ps1" \
-            || { echo "::error::Shared/payload/JoinWifi.ps1 is missing"; exit 1; }
-          grep -q "JoinWifi.ps1" Shared/payload/Provision.ps1 \
-            || { echo "::error::Provision.ps1 never references JoinWifi.ps1"; exit 1; }
-
-          # A machine came back with a staged payload, no provisioning and no logs
-          # at all, because Launch.cmd trusted schtasks and exited 0 in silence.
-          # Two properties stop that being possible again, and both are easy to
-          # undo by accident while editing batch.
-          grep -q 'launch.log' Shared/payload/Launch.cmd \
-            || { echo "::error::Launch.cmd no longer logs what it decided"; exit 1; }
-          grep -q 'provision-\*\.log' Shared/payload/Launch.cmd \
-            || { echo "::error::Launch.cmd no longer waits for proof that provisioning started"; exit 1; }
-          # RunOnce is the independent second trigger for a first logon that never
-          # runs FirstLogonCommands.
-          grep -q 'RunOnce' Shared/payload/Stage.cmd \
-            || { echo "::error::Stage.cmd no longer registers the RunOnce fallback"; exit 1; }
-          # The launch guard has to be a directory: mkdir is atomic, so two
-          # launchers firing together cannot both proceed.
-          grep -q 'mkdir "C:\\ImageHub\\.launched"' Shared/payload/Launch.cmd \
-            || { echo "::error::Launch.cmd's launch guard is no longer the atomic mkdir"; exit 1; }
-          echo "launcher chain has logging, proof-of-start, a second trigger and an atomic guard"
-
-          # A <ProductKey> in the answer file overrides the OEM key in the PC's
-          # firmware, which is what left machines showing "Activate Windows" until
-          # somebody opened Settings by hand. The default template must not write
-          # one; an operator choosing a MAK or KMS key is a separate, deliberate act.
-          if grep -q '<ProductKey>' /tmp/autounattend.xml; then
-            echo "::error::the default template writes a <ProductKey>, which blocks OEM activation"
-            exit 1
-          fi
-          echo "no product key in the default answer file, so the firmware key wins"
-
-          # The Office Deployment Tool rejects a malformed configuration outright,
-          # and it would do so after Windows is installed and provisioning is well
-          # under way. Same reasoning as the answer file: check it here.
-          "$BIN" --emit-office-config > /tmp/office.xml
-          xmllint --noout /tmp/office.xml
-          python3 - <<'PY3'
-          import sys, xml.etree.ElementTree as ET
-          root = ET.parse('/tmp/office.xml').getroot()
-          if root.tag != 'Configuration':
-              print(f'::error::Office config root is <{root.tag}>, expected <Configuration>')
-              sys.exit(1)
-          add = root.find('Add')
-          if add is None:
-              print('::error::Office config has no <Add> element, so it installs nothing')
-              sys.exit(1)
-          product = add.find('Product')
-          if product is None or not product.get('ID'):
-              print('::error::Office config <Add> has no <Product ID="...">')
-              sys.exit(1)
-          # Level None is what makes it unattended; a visible installer waits for
-          # a human who is not there.
-          display = root.find('Display')
-          if display is None or display.get('Level') != 'None':
-              print('::error::Office config is not silent (<Display Level="None"> missing)')
-              sys.exit(1)
-          if display.get('AcceptEULA') != 'TRUE':
-              print('::error::Office config does not accept the EULA, so it will prompt')
-              sys.exit(1)
-          print(f"office config installs {product.get('ID')} silently")
-          PY3
-
-          # Windows/Check-CatalogIDs.ps1 embeds the catalog's package IDs so it can
-          # run standalone on a Windows machine. Embedded means it can drift, and a
-          # drifted checker is worse than none: it would report an ID as fine that
-          # the catalog no longer ships, or miss one it does.
-          python3 - <<'PY4'
-          import re, sys
-          swift = open('Sources/ImageHub/Services/AppCatalog.swift').read()
-          catalog = re.findall(r'Entry\(id: "([^"]+)"', swift)
-          script = open('Windows/Check-CatalogIDs.ps1', encoding='utf-8-sig').read()
-          listed = re.findall(r"'([^']+)'", script[script.index('$ids = @('):script.index(')\n\nif')])
-          missing = [i for i in catalog if i not in listed]
-          extra = [i for i in listed if i not in catalog]
-          if missing:
-              print(f'::error::Check-CatalogIDs.ps1 is missing {missing}')
-          if extra:
-              print(f'::error::Check-CatalogIDs.ps1 lists IDs no longer in the catalog: {extra}')
-          if missing or extra:
-              sys.exit(1)
-          print(f'catalog checker covers all {len(catalog)} package IDs')
-          PY4
-
-          # The payload config is what Provision.ps1 parses.
-          "$BIN" --emit-payload-config > /tmp/config.json
-          python3 -c "import json,sys; json.load(open('/tmp/config.json'))"
-          echo "payload config is valid JSON"
-
-          # Provisioning's activation step reads this; a rename would silently
-          # turn activation off rather than fail.
-          python3 -c "
-          import json, sys
-          system = json.load(open('/tmp/config.json'))['system']
-          mode = system.get('activation', {}).get('mode')
-          if mode != 'automatic':
-              print(f'::error::payload config activation.mode is {mode!r}, expected \'automatic\'')
-              sys.exit(1)
-          print('payload config carries the activation settings')
-          "
+      - name: Verify the generated artifacts
+        run: python3 scripts/verify_generated.py
+          generated/autounattend.xml generated/office.xml generated/config.json
 
       - name: Read app version
         id: version
@@ -421,14 +239,207 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+      - name: Upload the generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-macos
+          path: generated/
+          if-no-files-found: error
+
+  windows:
+    name: Build Windows app + EXE
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Show toolchain
+        run: dotnet --info
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          version=$(sed -n 's/.*marketing = "\([^"]*\)".*/\1/p' Sources/ImageHub/Support/AppVersion.swift)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "ImageHub ${version}"
+
+      # One self-contained single file, so there is no runtime to install and the in-app
+      # updater has exactly one thing to swap. The publish settings live in the csproj;
+      # only the configuration is passed here.
+      - name: Publish ImageHub.exe
+        run: dotnet publish Windows/App/ImageHub.csproj -c Release -o publish
+
+      - name: Name the release files
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          cp publish/ImageHub.exe "dist/ImageHub-${version}-win-x64.exe"
+          (cd dist && 7z a -tzip "ImageHub-${version}-win-x64.zip" "ImageHub-${version}-win-x64.exe" >/dev/null)
+          ls -l dist
+
+      # A GUI-subsystem program does not keep the shell waiting, so the --emit-* modes
+      # have to be run through Start-Process with the output redirected. Nothing here
+      # touches WPF: App.xaml.cs's Main handles these before an Application exists.
+      - name: Emit the generated artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path generated | Out-Null
+          $exe = "publish/ImageHub.exe"
+          function Emit($argument, $target) {
+            $process = Start-Process -FilePath $exe -ArgumentList $argument -Wait -NoNewWindow `
+              -RedirectStandardOutput $target -RedirectStandardError "generated/stderr.txt" -PassThru
+            if ($process.ExitCode -ne 0) {
+              Get-Content "generated/stderr.txt" | Write-Host
+              throw "$exe $argument exited with $($process.ExitCode)"
+            }
+          }
+          Emit "--emit-answer-file"    "generated/autounattend.xml"
+          Emit "--emit-office-config"  "generated/office.xml"
+          Emit "--emit-payload-config" "generated/config.json"
+          Emit "--version"             "generated/version.txt"
+          Remove-Item "generated/stderr.txt" -ErrorAction SilentlyContinue
+          Get-ChildItem generated | Format-Table Name, Length
+
+      # ImageHub.csproj reads the version out of the macOS app's AppVersion.swift so
+      # there is one version for both platforms. If that ever stops working, the update
+      # check would compare against the wrong number — so it is asserted rather than
+      # trusted.
+      - name: Check the version stamped into the exe
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamped=$(tr -d '\r\n' < generated/version.txt)
+          expected="${{ steps.version.outputs.version }}"
+          if [ "$stamped" != "$expected" ]; then
+            echo "::error::ImageHub.exe reports version '${stamped}' but AppVersion.swift says '${expected}'"
+            exit 1
+          fi
+          echo "ImageHub.exe reports ${stamped}, matching AppVersion.swift"
+
+      - name: Verify the generated artifacts
+        shell: bash
+        run: python scripts/verify_generated.py
+          generated/autounattend.xml generated/office.xml generated/config.json
+
+      # The .exe carries Shared/payload as embedded resources. If that ever stops
+      # working the app builds and runs, and then fails on a drive with no
+      # Provision.ps1 — so the list is checked here.
+      - name: Check the payload rode along inside the exe
+        shell: pwsh
+        run: |
+          $listed = & {
+            $target = "generated/payload.txt"
+            $process = Start-Process -FilePath "publish/ImageHub.exe" -ArgumentList "--list-payload" `
+              -Wait -NoNewWindow -RedirectStandardOutput $target -PassThru
+            if ($process.ExitCode -ne 0) { throw "--list-payload exited with $($process.ExitCode)" }
+            Get-Content $target | Where-Object { $_.Trim() -ne "" }
+          }
+          $expected = Get-ChildItem Shared/payload -File | ForEach-Object { $_.Name }
+          $missing = $expected | Where-Object { $listed -notcontains $_ }
+          if ($missing) {
+            Write-Host "::error::ImageHub.exe is missing embedded payload files: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "all $($expected.Count) payload files are embedded in ImageHub.exe"
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageHub-windows-exe
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: Upload zipped EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ImageHub-windows-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Upload the generated artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-windows
+          path: generated/
+          if-no-files-found: error
+
+  # The README promises a drive built on Windows is interchangeable with one built on a
+  # Mac. This is what makes that true rather than hoped for: both apps generated the
+  # answer file, the Office configuration and the payload config from the same built-in
+  # template, and here the two sets are compared.
+  parity:
+    name: Same media from both apps
+    runs-on: ubuntu-latest
+    needs: [macos, windows]
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download the macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-macos
+          path: generated-macos
+
+      - name: Download the Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: generated-windows
+          path: generated-windows
+
+      - name: Compare
+        run: python3 scripts/compare_generated.py generated-macos generated-windows
+
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: [checks, macos, windows, parity]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Read app version
+        id: version
+        run: |
+          version=$(sed -n 's/.*marketing = "\([^"]*\)".*/\1/p' Sources/ImageHub/Support/AppVersion.swift)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect the release files
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.zip' \) \
+            -exec cp {} release/ \;
+          ls -l release
+          # A release that quietly carried only one platform's build would send every
+          # user of the other one to a download that isn't there.
+          test -n "$(find release -name '*.dmg' -print -quit)" \
+            || { echo "::error::no macOS DMG in the release"; exit 1; }
+          test -n "$(find release -name '*win-x64.exe' -print -quit)" \
+            || { echo "::error::no Windows EXE in the release"; exit 1; }
+
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release)
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.dmg
-            dist/*.zip
+          files: release/*
           generate_release_notes: true
-          # On tag pushes, release under that tag; on manual dispatch, create
-          # the tag v<app version> at the built commit.
+          # On tag pushes, release under that tag; on manual dispatch, create the tag
+          # v<app version> at the built commit.
           tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', steps.version.outputs.version) }}

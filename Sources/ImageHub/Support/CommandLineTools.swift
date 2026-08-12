@@ -48,8 +48,21 @@ enum CommandLineTools {
         Passwords are never included — these modes read no secrets from the Keychain.
         """
 
+    /// The built-in starter's `id` is a fresh UUID every time it is constructed, which
+    /// is right for the app and wrong for a fixture: CI generates from this template on
+    /// both platforms and compares the results, and a random `templateID` in
+    /// `config.json` is a difference on every run. Pinning it here keeps that field
+    /// genuinely compared — including that both apps write a GUID the same way — rather
+    /// than excluded from the comparison. A template loaded from a file needs no such
+    /// help: its id travels with the JSON.
+    static let fixtureTemplateID = "0F1E2D3C-4B5A-4697-8899-AABBCCDDEEFF"
+
     private static func loadTemplate(_ path: String?) -> DeploymentTemplate {
-        guard let path else { return .standardWorkstation() }
+        guard let path else {
+            var starter = DeploymentTemplate.standardWorkstation()
+            starter.id = UUID(uuidString: fixtureTemplateID) ?? starter.id
+            return starter
+        }
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
             let decoder = JSONDecoder()
