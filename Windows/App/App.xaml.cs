@@ -63,12 +63,41 @@ public partial class App : Application
     /// <summary>
     /// On a launch from a download folder, asks whether to install first.
     ///
-    /// ShutdownMode is the trap here. It is OnMainWindowClose, and WPF makes the first
-    /// window shown the MainWindow — so the offer dialog would become the main window
-    /// and closing it would end the process before the real window ever appeared.
-    /// OnExplicitShutdown for the duration, restored afterwards.
+    /// Two traps live here, both from this running before any other window exists.
+    ///
+    /// ShutdownMode is OnMainWindowClose, and WPF makes the first window it constructs
+    /// the MainWindow — so the offer dialog becomes the main window, and closing it
+    /// would end the process before the real window ever appeared. OnExplicitShutdown
+    /// for the duration, restored afterwards. (The same fact also made the dialog
+    /// resolve itself as its own owner; ThemedWindow.ConfigureAsDialog guards that.)
+    ///
+    /// And nothing in here may stop the app from starting. Installing is a convenience;
+    /// the app is perfectly usable from wherever it is, so a failure is logged, noted,
+    /// and stepped over rather than raised. Not doing this cost a release: an exception
+    /// building the dialog put a crash box in front of the app on every single launch.
     /// </summary>
     private void OfferToInstall()
+    {
+        try
+        {
+            RunInstallOffer();
+        }
+        catch (Exception error)
+        {
+            WriteCrashLog(error);
+            // Deterministic failures would otherwise repeat at every launch. The offer
+            // stays available under Tools, so nothing is permanently lost.
+            Settings.Current.InstallPromptAnswered = true;
+            Settings.Current.Save();
+            Notifier.Banner(
+                "Couldn't offer to install ImageHub",
+                "ImageHub is running from where you downloaded it, which works fine. "
+                + "Tools → Install ImageHub on This PC… tries again.",
+                BannerKind.Warning);
+        }
+    }
+
+    private void RunInstallOffer()
     {
         if (!Installer.ShouldOffer()) { return; }
 

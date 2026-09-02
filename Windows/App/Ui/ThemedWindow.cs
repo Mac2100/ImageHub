@@ -30,14 +30,23 @@ public class ThemedWindow : Window
     /// <summary>Sets up a modal dialog the way Windows dialogs behave.</summary>
     protected void ConfigureAsDialog(Window? owner, double width, double height)
     {
-        Owner = owner ?? Application.Current?.MainWindow;
+        // Application.MainWindow is whatever window WPF constructed first, and during
+        // startup that can be *this* one: the install offer is built before the main
+        // window exists, so the fallback resolved to itself and setting a window as its
+        // own owner throws "Cannot set Owner property to itself".
+        Window? candidate = owner ?? Application.Current?.MainWindow;
+        Owner = ReferenceEquals(candidate, this) ? null : candidate;
+
         Width = width;
         Height = height;
         WindowStartupLocation = Owner is null
             ? WindowStartupLocation.CenterScreen
             : WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.CanResize;
-        ShowInTaskbar = false;
+        // A dialog normally rides on its owner's taskbar button. With no owner there is
+        // no button to ride on, and an ownerless modal that is not in the taskbar can be
+        // lost behind another window with no way back to it.
+        ShowInTaskbar = Owner is null;
         MinWidth = Math.Min(width, 460);
         MinHeight = Math.Min(height, 320);
         // Escape closes a dialog, as it does everywhere else in Windows.

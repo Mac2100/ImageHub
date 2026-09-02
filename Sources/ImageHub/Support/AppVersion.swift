@@ -6,7 +6,7 @@ import Foundation
 /// the two have to agree, because they check the same GitHub release and compare it
 /// against their own version. CI asserts the exe really does report this number.
 enum AppVersion {
-    static let marketing = "1.7.1"
+    static let marketing = "1.7.2"
 
     /// Prefers the bundle version when running from a built .app, falls back to
     /// the compiled-in constant when running via `swift run`.

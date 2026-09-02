@@ -131,11 +131,22 @@ public static class Installer
     }
 
     /// <summary>
-    /// Copies this .exe into the install directory, adds the Start Menu shortcut and
-    /// the uninstall entry, and returns the path to run. Throws on failure, with a
-    /// message worth showing.
+    /// The result of an install: where the app now lives, and anything that did not
+    /// work but was not worth abandoning the install over.
     /// </summary>
-    public static async Task<string> InstallAsync()
+    public sealed record InstallOutcome(string ExePath, string? Warning);
+
+    /// <summary>
+    /// Copies this .exe into the install directory, adds the Start Menu shortcut and
+    /// the uninstall entry.
+    ///
+    /// Only the copy is essential — it is what puts the app somewhere permanent, and
+    /// what makes in-app updates land there instead of in Downloads. If that fails
+    /// there is no install and this throws. The shortcut and the Programs and Features
+    /// entry are conveniences: failing either would leave a copied .exe stranded with
+    /// no record of it, which is worse than an install that reports what it missed.
+    /// </summary>
+    public static async Task<InstallOutcome> InstallAsync()
     {
         string source = CurrentExePath;
         if (source.Length == 0)
@@ -169,9 +180,33 @@ public static class Installer
             await Task.Run(() => File.Copy(source, target, overwrite: true)).ConfigureAwait(false);
         }
 
-        await CreateShortcutAsync(target).ConfigureAwait(false);
-        RegisterUninstall(target);
-        return target;
+        var missed = new System.Collections.Generic.List<string>();
+
+        try
+        {
+            await CreateShortcutAsync(target).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            missed.Add("the Start Menu shortcut (" + error.Message + ")");
+        }
+
+        try
+        {
+            RegisterUninstall(target);
+        }
+        catch (Exception error)
+        {
+            missed.Add("the Programs and Features entry (" + error.Message + ")");
+        }
+
+        string? warning = missed.Count == 0
+            ? null
+            : "ImageHub was installed to " + InstallDirectory
+                + ", but couldn't create " + string.Join(" or ", missed)
+                + ". The app itself is fine — you can start it from that folder.";
+
+        return new InstallOutcome(target, warning);
     }
 
     /// <summary>

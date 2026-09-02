@@ -109,11 +109,21 @@ public sealed class InstallDialog : ThemedWindow
 
         try
         {
-            string target = await Installer.InstallAsync();
+            Installer.InstallOutcome outcome = await Installer.InstallAsync();
+
+            // Said here rather than as a banner afterwards: the app is about to relaunch
+            // from the installed copy, and a banner raised in this process would go with
+            // it. This is the last moment the message can be seen.
+            if (outcome.Warning is string warning)
+            {
+                MessageBox.Show(this, warning, "Install ImageHub",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
             // Close() rather than DialogResult: the caller reads InstalledExePath, and
             // assigning DialogResult throws if this window was ever shown non-modally.
             // OnClosed records that the offer was answered.
-            InstalledExePath = target;
+            InstalledExePath = outcome.ExePath;
             Close();
         }
         catch (Exception error)
