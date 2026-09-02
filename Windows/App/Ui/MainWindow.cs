@@ -226,6 +226,14 @@ public sealed class MainWindow : ThemedWindow
         tools.Items.Add(Item("Open _Templates Folder", null, () => AppPaths.Reveal(AppPaths.Templates)));
         tools.Items.Add(Item("Open _Image Library", null, () => AppPaths.Reveal(AppPaths.Images)));
         tools.Items.Add(Item("Open _Logs Folder", null, () => AppPaths.Reveal(AppPaths.Logs)));
+        // Only when this copy is not the installed one: someone who declined the offer
+        // at first run, or who never saw it because they run it from a folder that does
+        // not look like a download, should still have a way in.
+        if (!Installer.IsRunningInstalled)
+        {
+            tools.Items.Add(new Separator());
+            tools.Items.Add(Item("_Install ImageHub on This PC…", null, ShowInstallOffer));
+        }
         if (!Elevation.IsElevated)
         {
             tools.Items.Add(new Separator());
@@ -745,6 +753,32 @@ public sealed class MainWindow : ThemedWindow
     {
         var dialog = new UpdateDialog(this, version, url);
         dialog.ShowDialog();
+    }
+
+    private void ShowInstallOffer()
+    {
+        if (_state.IsBuilding)
+        {
+            Notifier.Banner("A build is running",
+                "Installing restarts ImageHub, so let it finish first.", BannerKind.Warning);
+            return;
+        }
+
+        var offer = new InstallDialog(this);
+        offer.ShowDialog();
+
+        if (offer.InstalledExePath is not string installed) { return; }
+        if (Installer.Relaunch(installed))
+        {
+            Application.Current.Shutdown();
+            return;
+        }
+
+        Notifier.Banner(
+            "Installed, but couldn't start the installed copy",
+            "This window is still the copy you downloaded. The Start Menu entry points at "
+            + Installer.InstalledExePath + ".",
+            BannerKind.Warning);
     }
 }
 

@@ -71,6 +71,13 @@ public static class CommandLineTools
                 Print(AppVersion.Current);
                 return 0;
 
+            // What Programs and Features invokes. Handled here, before WPF starts, so
+            // no window flashes up on the way to removing the app.
+            case "--uninstall":
+                AttachConsole();
+                Print(Installer.Uninstall());
+                return 0;
+
             case "--help":
             case "-h":
             case "/?":
@@ -98,6 +105,9 @@ public static class CommandLineTools
           ImageHub.exe --emit-template [template.json]      Print the template as ImageHub stores it
           ImageHub.exe --list-payload                       List the embedded provisioning scripts
           ImageHub.exe --version                            Print the version
+          ImageHub.exe --uninstall                          Remove the Start Menu shortcut,
+                                                           the Programs and Features entry
+                                                           and the installed copy
           ImageHub.exe --help                               Show this
 
         With no template path, the built-in "Standard Workstation" starter is used.

@@ -127,6 +127,33 @@ def strip_noise(source: str) -> str:
     return "".join(out)
 
 
+def enum_members(clean: str) -> set[str]:
+    """Names declared inside an enum body.
+
+    These are always reached through the enum (`AppSource.Installer`), so a member
+    sharing a type's name is not a use of that type. Attributes are stripped first, so
+    an attribute applied to a member is still checked like any other type reference.
+    """
+    names: set[str] = set()
+    for match in re.finditer(r"\benum\s+\w+[^{;]*\{", clean):
+        depth = 0
+        start = match.end()
+        cursor = match.end() - 1
+        while cursor < len(clean):
+            if clean[cursor] == "{":
+                depth += 1
+            elif clean[cursor] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            cursor += 1
+
+        body = re.sub(r"\[[^\]]*\]", " ", clean[start:cursor])
+        for member in re.finditer(r"([A-Za-z_]\w*)\s*(?:=[^,]*)?(?:,|$)", body):
+            names.add(member.group(1))
+    return names
+
+
 def top_level_types(clean: str) -> set[str]:
     """Type names declared directly in the namespace, not nested inside another type."""
     namespace_match = NAMESPACE.search(clean)
@@ -176,7 +203,7 @@ def main() -> int:
 
         # A type declared in this very file is visible whatever the usings say, and a
         # member declared here shadows any type of the same name.
-        own = top_level_types(clean) | set(MEMBER.findall(clean))
+        own = top_level_types(clean) | set(MEMBER.findall(clean)) | enum_members(clean)
 
         missing: dict[str, set[str]] = {}
         for word in set(WORD.findall(clean)):
