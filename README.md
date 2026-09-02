@@ -131,13 +131,28 @@ Open the DMG and drag **ImageHub** into **Applications**.
 
 ### Windows
 
-Download the `.exe` and run it. There is nothing to install: it is a single
-self-contained file with the .NET runtime, the provisioning payload and the icons
-inside it, so it runs from a folder, a share, or a stick.
+Download the `.exe` and run it. There is no separate installer to download: it is a
+single self-contained file with the .NET runtime, the provisioning payload and the
+icons inside it.
 
-Put it somewhere writable if you want in-app updates — the updater replaces the
-file it is running from, and `C:\Program Files` needs elevation for that.
-`%LOCALAPPDATA%\Programs\ImageHub\` is a good choice.
+The first time you run it from your Downloads folder, the desktop, or a temp folder,
+it offers to **install itself on this PC** — copying itself to
+`%LOCALAPPDATA%\Programs\ImageHub`, adding a Start Menu shortcut, registering in
+Programs and Features for a clean uninstall, and relaunching from there. It installs
+for your account only, so there is no UAC prompt.
+
+Decline and it stays genuinely portable: run it from a folder, a share, or a stick,
+and it will not ask again. **Tools → Install ImageHub on This PC…** is there whenever
+you change your mind, and the offer is skipped entirely when it is already running
+from a removable or network drive, since that is a deliberate portable use.
+
+Either way, your templates and settings live in `%APPDATA%\ImageHub` and
+`%LOCALAPPDATA%\ImageHub` rather than next to the `.exe`, so they survive an install,
+an update, and moving the file around. Uninstalling leaves them alone; the summary
+tells you where they are if you want them gone.
+
+One reason installing is worth it: the in-app updater replaces the file it is running
+from. Left in `Downloads`, that is the file it will keep rewriting.
 
 > **Note on SmartScreen:** the `.exe` is unsigned (a code-signing certificate is a
 > paid, per-year, identity-verified purchase), so the first run shows "Windows

@@ -51,11 +51,56 @@ public partial class App : Application
         Notifier.Attach(Dispatcher);
         ThemeManager.Apply();
 
+        OfferToInstall();
+
         // Fully qualified: inside App, the simple name MainWindow binds to
         // Application.MainWindow, the property this assigns to just below.
         var window = new ImageHub.Views.MainWindow();
         MainWindow = window;
         window.Show();
+    }
+
+    /// <summary>
+    /// On a launch from a download folder, asks whether to install first.
+    ///
+    /// ShutdownMode is the trap here. It is OnMainWindowClose, and WPF makes the first
+    /// window shown the MainWindow — so the offer dialog would become the main window
+    /// and closing it would end the process before the real window ever appeared.
+    /// OnExplicitShutdown for the duration, restored afterwards.
+    /// </summary>
+    private void OfferToInstall()
+    {
+        if (!Installer.ShouldOffer()) { return; }
+
+        ShutdownMode previous = ShutdownMode;
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        try
+        {
+            var offer = new ImageHub.Views.InstallDialog(null);
+            offer.ShowDialog();
+
+            if (offer.InstalledExePath is not string installed) { return; }
+
+            if (Installer.Relaunch(installed))
+            {
+                // The installed copy is starting; this one has nothing left to do.
+                Shutdown(0);
+                return;
+            }
+
+            // Installed, but starting the new copy failed. Carrying on here is correct —
+            // the app works from where it is — but say so, because the Start Menu entry
+            // now points somewhere this session is not running from.
+            Notifier.Banner(
+                "Installed, but couldn't start the installed copy",
+                "This window is still running from the file you downloaded. The Start Menu "
+                + "entry points at " + Installer.InstalledExePath + ".",
+                BannerKind.Warning);
+        }
+        finally
+        {
+            ShutdownMode = previous;
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

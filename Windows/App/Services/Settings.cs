@@ -87,6 +87,13 @@ public sealed class Settings : Observable
     /// </summary>
     public bool DidSeedStarterTemplates { get; set; }
 
+    /// <summary>
+    /// Set once the install offer has been accepted or declined, so a portable copy is
+    /// asked about exactly once. "Answered" rather than "dismissed": declining is a
+    /// real answer and must be remembered just as firmly as accepting.
+    /// </summary>
+    public bool InstallPromptAnswered { get; set; }
+
     // Window placement, so the app opens where it was left.
     public double WindowWidth { get; set; } = 1180;
 
